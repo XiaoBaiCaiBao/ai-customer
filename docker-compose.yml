@@ -31,6 +31,8 @@ services:
   qdrant:
     image: qdrant/qdrant:v1.13.1
     container_name: ai_customer_qdrant
+    ports:
+      - "127.0.0.1:6333:6333"  # 只允许本机访问，供 ingest 脚本使用
     volumes:
       - qdrant_data:/qdrant/storage
     restart: unless-stopped
