@@ -8,7 +8,9 @@ class Settings(BaseSettings):
     LLM_API_KEY: str = ""
     LLM_BASE_URL: str = ""  # 留空则使用 OpenAI 官方地址
 
-    EMBEDDING_MODEL: str = "text-embedding-3-small"
+    EMBEDDING_MODEL: str = "doubao-embedding-vision-251215"
+    # multimodal embedding 专用端点（与 LLM_BASE_URL 独立）
+    EMBEDDING_BASE_URL: str = "https://ark.cn-beijing.volces.com/api/v3/embeddings/multimodal"
 
     # Qdrant
     QDRANT_URL: str = "http://localhost:6333"

@@ -8,11 +8,10 @@ RAG 检索层 — 只读，知识库由外部独立服务写入
   [{"content": "...", "source": "产品手册.pdf", "score": 0.87}, ...]
 """
 
-import asyncio
-from qdrant_client import QdrantClient, AsyncQdrantClient
+import httpx
+from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import ScoredPoint
 from app.config import get_settings
-from app.llm import get_embeddings
 
 _async_client: AsyncQdrantClient | None = None
 
@@ -24,6 +23,28 @@ def _get_async_client() -> AsyncQdrantClient:
     return _async_client
 
 
+async def _embed_query(query: str) -> list[float]:
+    """
+    调用 doubao-embedding-vision multimodal 端点，纯文本输入。
+    input 格式: [{"type": "text", "text": "..."}]
+    """
+    s = get_settings()
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.post(
+            s.EMBEDDING_BASE_URL,
+            headers={
+                "Authorization": f"Bearer {s.LLM_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": s.EMBEDDING_MODEL,
+                "input": [{"type": "text", "text": query}],
+            },
+        )
+        resp.raise_for_status()
+        return resp.json()["data"]["embedding"]
+
+
 async def retrieve(query: str, top_k: int = 5) -> list[dict]:
     """
     检索知识库，返回最相关的 top_k 个文档片段。
@@ -31,13 +52,12 @@ async def retrieve(query: str, top_k: int = 5) -> list[dict]:
     """
     s = get_settings()
     try:
-        embeddings = get_embeddings()
-        query_vector = await asyncio.to_thread(embeddings.embed_query, query)
+        query_vector = await _embed_query(query)
 
         client = _get_async_client()
-        results: list[ScoredPoint] = await client.search(
+        response = await client.query_points(
             collection_name=s.QDRANT_COLLECTION,
-            query_vector=query_vector,
+            query=query_vector,
             limit=top_k,
             with_payload=True,
         )
@@ -49,10 +69,9 @@ async def retrieve(query: str, top_k: int = 5) -> list[dict]:
                 "section": r.payload.get("section", ""),
                 "score": round(r.score, 4),
             }
-            for r in results
-            if r.score > 0.5  # 过滤低相关性结果
+            for r in response.points
+            if r.score > 0.4
         ]
     except Exception as e:
-        # 知识库服务不可用时不影响 Agent 运行
         print(f"[RAG] 检索失败，降级处理: {e}")
         return []
