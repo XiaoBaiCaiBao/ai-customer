@@ -52,14 +52,98 @@ npm run dev
 
 打开 http://localhost:5173
 
-### 3. 基础设施（可选，生产或需要知识库时）
+### 3. 基础设施（本地开发，可选）
 
 ```bash
-docker compose up -d   # 启动 Qdrant (6333) + MongoDB (27017)
+docker compose -f docker-compose.dev.yml up -d   # 只启动 Qdrant (6333) + MongoDB (27017)
 ```
 
 在 `.env` 中将 `USE_MEMORY=false` 并配置 `MONGODB_URL`。  
 知识库由外部服务写入 Qdrant，本项目只负责检索。
+
+---
+
+## 服务器部署（生产环境）
+
+### 1. 购买云服务器
+
+推荐规格：**2 核 4 GB 内存**（阿里云 / 腾讯云 / 火山引擎轻量应用服务器，约 ¥60-100/月）  
+系统：Ubuntu 22.04 LTS
+
+### 2. 服务器初始化
+
+```bash
+# 安装 Docker
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER
+newgrp docker
+
+# 安装 Docker Compose plugin（通常随 Docker 一起安装，验证一下）
+docker compose version
+```
+
+### 3. 拉取代码 & 配置环境变量
+
+```bash
+git clone https://github.com/你的账号/ai-customer.git
+cd ai-customer
+
+cp backend/.env.example backend/.env
+# 编辑 .env，填写 API Key、模型名等
+vi backend/.env
+```
+
+关键配置项（生产环境）：
+
+```bash
+LLM_MODEL=doubao-seed-1-8-251228
+LLM_API_KEY=your-key
+LLM_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
+
+EMBEDDING_MODEL=doubao-embedding-vision-251215
+EMBEDDING_BASE_URL=https://ark.cn-beijing.volces.com/api/v3/embeddings/multimodal
+
+USE_MEMORY=false   # 生产环境用 MongoDB 持久化
+
+# 以下由 docker-compose.yml 自动覆盖，保持默认即可
+QDRANT_URL=http://qdrant:6333
+MONGODB_URL=mongodb://mongodb:27017
+```
+
+### 4. 启动全栈服务
+
+```bash
+docker compose up -d --build
+```
+
+首次会拉取镜像并构建，约需 3-5 分钟。启动后通过服务器 IP 访问：`http://<服务器IP>`
+
+查看服务状态：
+
+```bash
+docker compose ps
+docker compose logs -f backend   # 实时查看后端日志
+```
+
+### 5. 导入知识库（可选）
+
+知识库数据需要在服务器上单独运行一次导入脚本：
+
+```bash
+# 将 PDF 文件上传到服务器 data/ 目录后执行
+cd scripts
+pip install -r requirements.txt
+python ingest_pdf.py ../data/你的文档.pdf
+```
+
+### 6. 绑定域名（可选）
+
+如果有域名，解析 A 记录到服务器 IP，再配置 SSL 证书（推荐使用 Certbot + Let's Encrypt）：
+
+```bash
+sudo apt install certbot python3-certbot-nginx
+sudo certbot --nginx -d your-domain.com
+```
 
 ## 切换 LLM 模型
 
@@ -125,5 +209,6 @@ frontend/
 │   ├── views/ChatView.vue    # 主页面
 │   ├── components/MessageBubble.vue
 │   └── stores/chat.js        # 状态管理 + SSE 对接
-docker-compose.yml            # Qdrant + MongoDB
+docker-compose.yml            # 生产全栈（nginx + backend + qdrant + mongodb）
+docker-compose.dev.yml        # 本地开发（仅 qdrant + mongodb）
 ```
