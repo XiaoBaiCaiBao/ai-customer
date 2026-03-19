@@ -1,0 +1,19 @@
+# Python
+backend/venv/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/.env
+*.pyc
+*.pyo
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# IDE
+.DS_Store
+.vscode/
+.idea/
+
+# Docker volumes (本地数据)
+data/
