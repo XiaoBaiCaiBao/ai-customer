@@ -7,8 +7,8 @@ export const useChatStore = defineStore('chat', () => {
   const isThinking = ref(false)
   const currentIntent = ref(null)
 
-  function addUserMessage(content) {
-    messages.value.push({ role: 'user', content, id: Date.now() })
+  function addUserMessage(content, images = []) {
+    messages.value.push({ role: 'user', content, images, id: Date.now() })
   }
 
   function startAssistantMessage() {
@@ -29,10 +29,11 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  async function sendMessage(text) {
-    if (!text.trim() || isThinking.value) return
+  async function sendMessage(text, images = []) {
+    if (!text.trim() && !images.length) return
+    if (isThinking.value) return
 
-    addUserMessage(text)
+    addUserMessage(text, images)
     isThinking.value = true
     currentIntent.value = null
 
