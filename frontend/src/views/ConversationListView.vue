@@ -1,10 +1,10 @@
 <template>
-  <div class="min-h-screen bg-[#1d1d22] flex flex-col relative overflow-hidden">
+  <div class="h-[100dvh] bg-[#1d1d22] flex flex-col relative overflow-hidden">
 
     <AppHeader title="消息列表"></AppHeader>
 
-    <!-- 会话列表 -->
-    <main class="flex-1 relative z-10 px-4 py-5 flex flex-col gap-4 max-w-lg mx-auto w-full">
+    <!-- 会话列表（可滚动） -->
+    <main class="flex-1 overflow-y-auto relative z-10 px-4 py-5 flex flex-col gap-4 max-w-lg mx-auto w-full">
       <button
         v-for="item in conversations"
         :key="item.id"
@@ -52,7 +52,7 @@
     </main>
 
     <!-- 底部导航栏 -->
-    <nav class="relative z-10 bg-[#222228] border-t border-white/10 shrink-0">
+    <nav class="relative z-10 bg-[#222228] border-t border-white/10 shrink-0" style="padding-bottom: env(safe-area-inset-bottom)">
       <div class="flex items-center justify-around py-4 max-w-lg mx-auto">
         <!-- 消息（当前激活） -->
         <button class="flex flex-col items-center gap-2 group">

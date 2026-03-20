@@ -1,10 +1,10 @@
 <template>
-  <div class="flex flex-col h-screen text-white max-w-md mx-auto relative" :class="isRafayel ? 'bg-[#0e0e14]' : 'bg-[#1d1d22]'">
+  <div class="flex flex-col h-[100%] text-white relative" :class="isRafayel ? 'bg-[#0e0e14]' : 'bg-[#1d1d22]'">
 
     <!-- 背景：Rafayel 显示背景图，AI助手 纯色 -->
     <div class="absolute inset-0 pointer-events-none z-0">
       <template v-if="isRafayel">
-        <div class="max-h-screen overflow-hidden">
+        <div class="overflow-hidden">
           <img :src="bgImage" alt="" class="w-full object-contain object-top" />
         </div>
       </template>
@@ -18,13 +18,6 @@
       ref="scrollRef"
       class="flex-1 overflow-y-auto px-4 py-4 space-y-1 relative z-10"
     >
-      <!-- 日期分割线 -->
-      <div class="flex items-center justify-center my-3">
-        <span class="text-xs text-gray-600 bg-surface-card px-3 py-1 rounded-full border border-surface-border">
-          TODAY
-        </span>
-      </div>
-
       <!-- 欢迎消息 -->
       <MessageBubble
         v-if="chatStore.messages.length === 0"
@@ -53,7 +46,7 @@
     </div>
 
     <!-- 快捷操作 chips -->
-    <div class="px-4 pb-2 flex gap-2 overflow-x-auto flex-shrink-0 relative z-10 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+    <div class="px-4 pt-2 flex gap-2 overflow-x-auto flex-shrink-0 relative z-10 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
       <button
         v-for="chip in quickChips"
         :key="chip"
@@ -84,7 +77,7 @@
     </div>
 
     <!-- 输入栏 -->
-    <div class="px-4 py-3 border-t border-surface-border flex-shrink-0 relative z-10">
+    <div class="px-4 pt-2 pb-3 flex-shrink-0 relative z-10">
       <div class="flex items-center gap-3 bg-surface-card border border-surface-border rounded-2xl px-4 py-2.5">
         <!-- 左侧加号：切换 more panel -->
         <button
@@ -126,7 +119,7 @@
       leave-from-class="translate-y-0 opacity-100"
       leave-to-class="translate-y-full opacity-0"
     >
-      <div v-if="showPanel" class="flex-shrink-0 border-surface-border px-6 pt-1 pb-6 relative z-10">
+      <div v-if="showPanel" class="flex-shrink-0 border-surface-border px-6 pt-1 relative z-10">
         <div class="flex gap-6">
           <!-- 图片上传 -->
           <button

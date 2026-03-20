@@ -3,9 +3,9 @@
   <div v-if="message.role === 'assistant'" class="flex flex-col items-start gap-1 mb-5 pl-1">
     <div class="relative max-w-[88%]">
       <div
-        class="relative px-4 py-3 rounded-tr-2xl rounded-tl-2xl rounded-br-2xl text-[rgba(255,255,255,0.9)] text-sm leading-relaxed"
+        class="relative px-4 py-3 rounded-tr-2xl rounded-tl-2xl rounded-br-2xl text-[rgba(255,255,255,0.9)] text-sm leading-relaxed backdrop-blur-md"
         :class="{ 'animate-pulse': message.streaming && !message.content }"
-        style="background: #5C5FFF;"
+        style="background: rgba(92, 95, 255, 0.32); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);"
       >
         <!-- 虚线边框（排除左下角） -->
         <div class="absolute inset-0 rounded-tr-2xl rounded-tl-2xl rounded-br-2xl border border-dashed border-white/20 pointer-events-none" />
@@ -44,7 +44,7 @@
     <div v-if="message.content" class="relative max-w-[88%]">
       <div
         class="relative px-4 py-3 rounded-2xl text-[rgba(255,255,255,0.9)] text-sm leading-relaxed backdrop-blur-md"
-        style="background: rgba(92, 95, 255, 0.18);"
+        style="background: rgba(92, 95, 255, 0.18); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);"
       >
         <div class="absolute inset-0 rounded-2xl border border-dashed border-white/25 pointer-events-none" />
         <div class="absolute top-0 left-0 w-1/3 h-1/2 rounded-tl-2xl bg-gradient-to-br from-white/8 to-transparent pointer-events-none" />

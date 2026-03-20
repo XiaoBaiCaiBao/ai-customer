@@ -1,9 +1,9 @@
 <template>
-  <div class="min-h-screen bg-[#1d1d22] relative flex flex-col overflow-hidden">
+  <div class="h-[100dvh] bg-[#1d1d22] relative flex flex-col overflow-hidden">
     <AppHeader title="密码登录" />
 
-    <!-- 主体内容 -->
-    <main class="relative z-10 flex flex-col flex-1 px-6 pt-10 pb-10 max-w-md mx-auto w-full">
+    <!-- 主体内容（可滚动，键盘弹起时内容不被遮挡） -->
+    <main class="relative z-10 flex flex-col flex-1 overflow-y-auto px-6 pt-10 pb-10 max-w-md mx-auto w-full">
       <form class="flex flex-col gap-6" @submit.prevent="handleLogin">
         <!-- 邮箱输入框 -->
         <div class="relative">
