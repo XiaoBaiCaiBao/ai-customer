@@ -11,7 +11,60 @@
     </div>
 
     <!-- Header -->
-    <AppHeader title="AI助手" :show-back="true"></AppHeader>
+    <AppHeader title="AI助手" :show-back="true">
+      <template #right>
+        <div class="flex items-center gap-2">
+          <button
+            v-if="isAdmin"
+            @click="showAdminModal = true"
+            class="text-xs px-2 py-1 border border-accent rounded-lg text-accent hover:bg-accent/20 transition-colors"
+          >
+            管理
+          </button>
+          <button
+            @click="logout"
+            class="text-xs px-2 py-1 border border-gray-500 rounded-lg text-gray-400 hover:text-white transition-colors"
+          >
+            退出
+          </button>
+        </div>
+      </template>
+    </AppHeader>
+
+    <!-- Admin 管理弹窗 -->
+    <div v-if="showAdminModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
+      <div class="bg-surface-card border border-surface-border rounded-2xl w-full max-w-sm p-5 space-y-4">
+        <div class="flex items-center justify-between">
+          <h2 class="text-lg font-bold">管理员控制台</h2>
+          <button @click="showAdminModal = false" class="text-gray-400 hover:text-white">✕</button>
+        </div>
+        
+        <div class="space-y-3">
+          <div class="text-sm text-gray-400">选择要清除记录的用户邮箱：</div>
+          <input
+            v-model="adminTargetUser"
+            type="text"
+            placeholder="输入邮箱或留空"
+            class="w-full h-10 rounded-xl bg-black/30 border border-surface-border px-3 text-sm text-white outline-none focus:border-accent"
+          />
+          <div class="flex gap-2">
+            <button
+              @click="clearUserHistory"
+              class="flex-1 bg-red-500/20 text-red-400 hover:bg-red-500/40 py-2 rounded-xl text-sm transition-colors"
+            >
+              清除该用户记录
+            </button>
+            <button
+              @click="clearAllHistory"
+              class="flex-1 bg-red-500 text-white hover:bg-red-600 py-2 rounded-xl text-sm font-bold shadow-lg transition-colors"
+            >
+              清空全站记录
+            </button>
+          </div>
+          <p v-if="adminMsg" class="text-xs text-accent mt-2 text-center">{{ adminMsg }}</p>
+        </div>
+      </div>
+    </div>
 
     <!-- 消息列表 -->
     <div
@@ -31,16 +84,19 @@
         :message="msg"
       />
 
-      <!-- 思考中动画 -->
+      <!-- 思考中动画（无消息时显示，有消息后由 MessageBubble 内部处理） -->
       <div v-if="chatStore.isThinking && !hasStreamingMessage" class="flex flex-col gap-1 mb-4">
         <span class="text-xs font-semibold tracking-widest text-gray-500 uppercase px-1">
           AI助手
         </span>
         <div class="flex items-center gap-1.5 px-4 py-3 bg-surface-card border border-surface-border rounded-2xl rounded-tl-sm w-fit">
+          <span class="text-sm animate-spin" style="display:inline-block">🧠</span>
           <span class="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style="animation-delay:0ms" />
           <span class="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style="animation-delay:150ms" />
           <span class="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style="animation-delay:300ms" />
-          <span class="text-xs text-gray-500 ml-1">思考中...</span>
+          <span class="text-xs text-gray-500 ml-1">
+            {{ intentThinkingLabel }}
+          </span>
         </div>
       </div>
     </div>
@@ -164,13 +220,14 @@
 
 <script setup>
 import { ref, computed, nextTick, watch, onMounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useChatStore } from '../stores/chat'
 import AppHeader from '../components/AppHeader.vue'
 import MessageBubble from '../components/MessageBubble.vue'
 import bgImage from '../assets/common/Rafayel.webp'
 
 const route = useRoute()
+const router = useRouter()
 const isRafayel = computed(() => route.query.agent === 'rafayel')
 
 const chatStore = useChatStore()
@@ -180,6 +237,66 @@ const showPanel = ref(false)
 const fileInputRef = ref(null)
 const pendingImages = ref([]) // [{ url: string, file: File }]
 
+const isAdmin = computed(() => localStorage.getItem('chat_user_role') === 'admin')
+const showAdminModal = ref(false)
+const adminTargetUser = ref('')
+const adminMsg = ref('')
+
+async function clearUserHistory() {
+  if (!adminTargetUser.value) {
+    adminMsg.value = '请输入用户邮箱'
+    return
+  }
+  adminMsg.value = '清理中...'
+  try {
+    const q = new URLSearchParams({ target_user_id: adminTargetUser.value })
+    const res = await fetch(`/api/admin/history/user?${q}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${localStorage.getItem('chat_token')}` }
+    })
+    const data = await res.json()
+    if (res.ok) {
+      adminMsg.value = data.message || '清理成功'
+      if (adminTargetUser.value === localStorage.getItem('chat_user_id')) {
+        chatStore.messages = [] // 本人如果在看，顺便清一下列表
+      }
+    } else {
+      adminMsg.value = data.error || '清理失败'
+    }
+  } catch (e) {
+    adminMsg.value = '请求失败'
+  }
+}
+
+async function clearAllHistory() {
+  if (!confirm('确定要清空全站所有对话记录吗？')) return
+  adminMsg.value = '清理中...'
+  try {
+    const res = await fetch(`/api/admin/history/all`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${localStorage.getItem('chat_token')}` }
+    })
+    const data = await res.json()
+    if (res.ok) {
+      adminMsg.value = data.message || '全部清理成功'
+      chatStore.messages = [] // 全清了当前肯定也空了
+    } else {
+      adminMsg.value = data.error || '清理失败'
+    }
+  } catch (e) {
+    adminMsg.value = '请求失败'
+  }
+}
+
+function logout() {
+  localStorage.removeItem('chat_token')
+  localStorage.removeItem('chat_user_id')
+  localStorage.removeItem('chat_user_role')
+  chatStore.messages = []
+  chatStore.refreshUser()
+  router.push('/login')
+}
+
 const welcomeMessage = {
   role: 'assistant',
   content: '你好，我是你的AI助手，有什么可以帮你的吗？',
@@ -187,11 +304,32 @@ const welcomeMessage = {
   streaming: false,
 }
 
-const quickChips = ['会员权益', '账户安全', '积分问题', '充值问题', '产品建议']
+const quickChips = [
+  '聊天时为什么出现红色感叹号',
+  '帮我查询北京天气',
+  '我充了月卡但体力没到账',
+  '会员权益',
+  '积分问题',
+]
 
 const hasStreamingMessage = computed(() =>
   chatStore.messages.some(m => m.streaming)
 )
+
+const INTENT_THINKING_LABELS = {
+  product_info: '查询知识库中…',
+  usage_issue:  '检索问题解决方案…',
+  complaint:    '记录用户反馈…',
+  aftersales:   '核查订单与资产…',
+  event:        '查询活动信息…',
+  web_search:   '联网查询中…',
+  chat:         '思考回复中…',
+}
+
+const intentThinkingLabel = computed(() => {
+  const intent = chatStore.currentIntent
+  return INTENT_THINKING_LABELS[intent] || '思考中…'
+})
 
 function togglePanel() {
   showPanel.value = !showPanel.value

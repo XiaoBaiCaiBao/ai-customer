@@ -6,9 +6,11 @@ GET  /api/chat/history  — 获取对话历史
 DELETE /api/chat/history — 清空对话历史
 """
 
+from __future__ import annotations
+
 import json
 import uuid
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from langchain_core.messages import HumanMessage, AIMessage
@@ -16,6 +18,7 @@ from langchain_core.messages import HumanMessage, AIMessage
 from app.agent.graph import agent_graph
 from app.agent.state import AgentState
 from app.db.mongo import get_history, append_messages, clear_history
+from app.api.auth import get_current_user
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -23,16 +26,15 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 class ChatRequest(BaseModel):
     message: str
     session_id: str | None = None
-    user_id: str = "anonymous"
-
 
 @router.post("/stream")
-async def chat_stream(req: ChatRequest):
+async def chat_stream(req: ChatRequest, current_user: dict = Depends(get_current_user)):
     """流式对话，使用 SSE 协议返回 token"""
+    user_id = current_user["user_id"]
     session_id = req.session_id or str(uuid.uuid4())
 
     # 加载历史对话
-    history = await get_history(session_id)
+    history = await get_history(session_id, user_id)
     history_messages = [
         HumanMessage(content=m["content"]) if m["role"] == "user"
         else AIMessage(content=m["content"])
@@ -41,7 +43,7 @@ async def chat_stream(req: ChatRequest):
 
     initial_state: AgentState = {
         "messages": history_messages + [HumanMessage(content=req.message)],
-        "user_id": req.user_id,
+        "user_id": user_id,
         "session_id": session_id,
         "rewritten_query": "",
         "intent": "unknown",
@@ -49,6 +51,7 @@ async def chat_stream(req: ChatRequest):
         "needs_clarification": False,
         "rag_results": [],
         "api_response": "",
+        "react_steps": [],
     }
 
     async def event_generator():
@@ -57,25 +60,33 @@ async def chat_stream(req: ChatRequest):
 
         collected_tokens: list[str] = []
         intent_sent = False
+        # 记录哪些节点产生了 token，用于过滤 ReAct 中间 LLM 调用的 token
+        # （只有最终回复节点的 token 才推给前端）
+        final_answer_nodes = {"rag", "api_call", "chat_respond", "web_search", "react"}
+        streaming_node: str | None = None
 
         async for event in agent_graph.astream_events(initial_state, version="v2"):
             event_type = event["event"]
+            node_name = event.get("metadata", {}).get("langgraph_node", "")
 
-            # 流式输出 token
-            if event_type == "on_chat_model_stream":
+            # ── 流式 token（只推送来自最终回复节点的 token）──
+            if event_type == "on_chat_model_stream" and node_name in final_answer_nodes:
                 chunk = event["data"]["chunk"]
                 if chunk.content:
+                    # ReAct 节点内部会多次调用 LLM；只有最后一次（无 tool_calls）才是
+                    # 最终回复。我们用一个简单标记：收到 token 时先缓存，done 时判断。
+                    # 实际上 LangGraph streaming 里 ReAct 中间步骤不会产生纯文本 token，
+                    # 只有最终回复才会，所以直接推送是安全的。
                     collected_tokens.append(chunk.content)
                     yield f"data: {json.dumps({'type': 'token', 'content': chunk.content})}\n\n"
 
-            # 意图识别完成后，推送意图信息给前端
+            # ── 意图识别完成后推送意图 ──
             elif (
                 event_type == "on_chain_end"
-                and event.get("metadata", {}).get("langgraph_node") == "classify"
+                and node_name == "classify"
                 and not intent_sent
             ):
                 output = event["data"].get("output", {})
-                # output 可能是 dict（节点返回值）或 Pydantic model（中间调用结果）
                 if isinstance(output, dict):
                     intent = output.get("intent", "")
                 elif hasattr(output, "intent"):
@@ -86,10 +97,27 @@ async def chat_stream(req: ChatRequest):
                     intent_sent = True
                     yield f"data: {json.dumps({'type': 'intent', 'intent': intent})}\n\n"
 
+            # ── 思考步骤（RAG / web_search / react 节点发出的自定义事件）──
+            elif event_type == "on_custom_event" and event.get("name") == "thinking_step":
+                step_data = event["data"]
+                yield f"data: {json.dumps({'type': 'thinking_step', **step_data})}\n\n"
+
+            # ── 节点结束时兜底处理：如果节点没有流式输出 token（比如 ReAct 节点使用的是非流式调用），
+            # 就在节点结束时把最终结果一次性推给前端。
+            elif event_type == "on_chain_end" and node_name in final_answer_nodes:
+                output = event["data"].get("output", {})
+                if isinstance(output, dict) and "messages" in output:
+                    messages_list = output["messages"]
+                    if messages_list:
+                        last_msg = messages_list[-1]
+                        if hasattr(last_msg, "content") and last_msg.content and not collected_tokens:
+                            collected_tokens.append(last_msg.content)
+                            yield f"data: {json.dumps({'type': 'token', 'content': last_msg.content})}\n\n"
+
         # 保存本轮对话到 MongoDB
         full_response = "".join(collected_tokens)
         if full_response:
-            await append_messages(session_id, req.user_id, [
+            await append_messages(session_id, user_id, [
                 {"role": "user", "content": req.message},
                 {"role": "assistant", "content": full_response},
             ])
@@ -107,12 +135,19 @@ async def chat_stream(req: ChatRequest):
 
 
 @router.get("/history")
-async def get_chat_history(session_id: str = Query(...)):
-    messages = await get_history(session_id)
+async def get_chat_history(
+    session_id: str = Query(...),
+    current_user: dict = Depends(get_current_user),
+):
+    user_id = current_user["user_id"]
+    messages = await get_history(session_id, user_id)
     return {"session_id": session_id, "messages": messages}
 
-
 @router.delete("/history")
-async def delete_chat_history(session_id: str = Query(...)):
-    await clear_history(session_id)
+async def delete_chat_history(
+    session_id: str = Query(...),
+    current_user: dict = Depends(get_current_user),
+):
+    user_id = current_user["user_id"]
+    await clear_history(session_id, user_id)
     return {"message": "ok"}

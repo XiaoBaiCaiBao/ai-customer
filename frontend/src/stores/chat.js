@@ -1,18 +1,59 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 
+/** 与后端 ChatRequest.user_id 一致；多用户时在登录后设置 localStorage.chat_user_id */
+function readUserId() {
+  return localStorage.getItem('chat_user_id') || 'demo_user'
+}
+
+function getAuthHeaders() {
+  const token = localStorage.getItem('chat_token')
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
+function sessionStorageKey(userId) {
+  return `chat_session_id_${userId}`
+}
+
+function initialSessionId(userId) {
+  const k = sessionStorageKey(userId)
+  let sid = localStorage.getItem(k)
+  if (!sid) {
+    const legacy = localStorage.getItem('chat_session_id')
+    if (legacy) {
+      localStorage.setItem(k, legacy)
+      localStorage.removeItem('chat_session_id')
+      sid = legacy
+    }
+  }
+  return sid
+}
+
 export const useChatStore = defineStore('chat', () => {
   const messages = ref([])
-  const sessionId = ref(localStorage.getItem('chat_session_id') || null)
+  const userId = ref(readUserId())
+  const sessionId = ref(initialSessionId(userId.value) || null)
   const isThinking = ref(false)
   const currentIntent = ref(null)
+
+  function refreshUser() {
+    userId.value = readUserId()
+    sessionId.value = initialSessionId(userId.value) || null
+  }
 
   function addUserMessage(content, images = []) {
     messages.value.push({ role: 'user', content, images, id: Date.now() })
   }
 
   function startAssistantMessage() {
-    const msg = { role: 'assistant', content: '', id: Date.now(), streaming: true }
+    const msg = {
+      role: 'assistant',
+      content: '',
+      id: Date.now(),
+      streaming: true,
+      thinkingSteps: [],  // 思考步骤列表
+      intent: null,
+    }
     messages.value.push(msg)
     return messages.value.length - 1
   }
@@ -20,6 +61,18 @@ export const useChatStore = defineStore('chat', () => {
   function appendToken(index, token) {
     if (messages.value[index]) {
       messages.value[index].content += token
+    }
+  }
+
+  function appendThinkingStep(index, step) {
+    if (messages.value[index]) {
+      messages.value[index].thinkingSteps.push(step)
+    }
+  }
+
+  function setMessageIntent(index, intent) {
+    if (messages.value[index]) {
+      messages.value[index].intent = intent
     }
   }
 
@@ -42,11 +95,10 @@ export const useChatStore = defineStore('chat', () => {
     try {
       const response = await fetch('/api/chat/stream', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify({
           message: text,
           session_id: sessionId.value,
-          user_id: 'demo_user',
         }),
       })
 
@@ -65,11 +117,18 @@ export const useChatStore = defineStore('chat', () => {
 
             if (data.type === 'session' && !sessionId.value) {
               sessionId.value = data.session_id
-              localStorage.setItem('chat_session_id', data.session_id)
+              localStorage.setItem(sessionStorageKey(userId.value), data.session_id)
             } else if (data.type === 'token') {
               appendToken(msgIndex, data.content)
             } else if (data.type === 'intent') {
               currentIntent.value = data.intent
+              setMessageIntent(msgIndex, data.intent)
+            } else if (data.type === 'thinking_step') {
+              appendThinkingStep(msgIndex, {
+                step_type: data.step_type,
+                step_num: data.step_num,
+                content: data.content,
+              })
             } else if (data.type === 'done') {
               finalizeMessage(msgIndex)
             }
@@ -89,9 +148,19 @@ export const useChatStore = defineStore('chat', () => {
   async function loadHistory() {
     if (!sessionId.value) return
     try {
-      const res = await fetch(`/api/chat/history?session_id=${sessionId.value}`)
+      const q = new URLSearchParams({
+        session_id: sessionId.value,
+      })
+      const res = await fetch(`/api/chat/history?${q}`, {
+        headers: getAuthHeaders()
+      })
       const data = await res.json()
-      messages.value = data.messages.map((m, i) => ({ ...m, id: i }))
+      messages.value = data.messages.map((m, i) => ({
+        ...m,
+        id: i,
+        thinkingSteps: [],
+        intent: null,
+      }))
     } catch {
       // 静默失败
     }
@@ -99,19 +168,27 @@ export const useChatStore = defineStore('chat', () => {
 
   async function clearHistory() {
     if (!sessionId.value) return
-    await fetch(`/api/chat/history?session_id=${sessionId.value}`, { method: 'DELETE' })
+    const q = new URLSearchParams({
+      session_id: sessionId.value,
+    })
+    await fetch(`/api/chat/history?${q}`, { 
+      method: 'DELETE',
+      headers: getAuthHeaders()
+    })
     messages.value = []
     sessionId.value = null
-    localStorage.removeItem('chat_session_id')
+    localStorage.removeItem(sessionStorageKey(userId.value))
   }
 
   return {
     messages,
+    userId,
     sessionId,
     isThinking,
     currentIntent,
     sendMessage,
     loadHistory,
     clearHistory,
+    refreshUser,
   }
 })

@@ -11,7 +11,7 @@
 | Agent | LangGraph |
 | LLM | OpenAI 兼容接口（可切换任意模型） |
 | 向量库 | Qdrant（外部独立服务，可选） |
-| 对话历史 | 内存（开发） / MongoDB（生产） |
+| 对话历史 | MongoDB（按 `user_id` + `session_id` 隔离） |
 
 ## Agent 意图路由
 
@@ -37,7 +37,7 @@ pip install -r requirements.txt
 
 cp .env.example .env
 # 编辑 .env，至少填写 LLM_MODEL / LLM_API_KEY / LLM_BASE_URL
-# USE_MEMORY=true 时无需任何数据库，直接启动
+# 对话历史依赖 MongoDB：可先执行下方 docker compose 启动 Mongo，或自备实例并配置 MONGODB_URL
 
 uvicorn main:app --reload --port 8000
 ```
@@ -52,13 +52,13 @@ npm run dev
 
 打开 http://localhost:5173
 
-### 3. 基础设施（本地开发，可选）
+### 3. 基础设施（本地开发）
 
 ```bash
-docker compose -f docker-compose.dev.yml up -d   # 只启动 Qdrant (6333) + MongoDB (27017)
+docker compose -f docker-compose.dev.yml up -d   # Qdrant (6333) + MongoDB (27017)
 ```
 
-在 `.env` 中将 `USE_MEMORY=false` 并配置 `MONGODB_URL`。  
+`.env` 中配置 `MONGODB_URL=mongodb://localhost:27017`（与 dev compose 一致）。  
 知识库由外部服务写入 Qdrant，本项目只负责检索。
 
 ---
@@ -102,8 +102,6 @@ LLM_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
 
 EMBEDDING_MODEL=doubao-embedding-vision-251215
 EMBEDDING_BASE_URL=https://ark.cn-beijing.volces.com/api/v3/embeddings/multimodal
-
-USE_MEMORY=false   # 生产环境用 MongoDB 持久化
 
 # 以下由 docker-compose.yml 自动覆盖，保持默认即可
 QDRANT_URL=http://qdrant:6333
@@ -181,8 +179,8 @@ LLM_BASE_URL=http://localhost:11434/v1
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | POST | `/api/chat/stream` | SSE 流式对话 |
-| GET | `/api/chat/history?session_id=xxx` | 获取对话历史 |
-| DELETE | `/api/chat/history?session_id=xxx` | 清空对话历史 |
+| GET | `/api/chat/history?session_id=xxx&user_id=xxx` | 获取对话历史（须与创建会话时 user_id 一致） |
+| DELETE | `/api/chat/history?session_id=xxx&user_id=xxx` | 清空对话历史 |
 | GET | `/health` | 健康检查 |
 
 ## 项目结构

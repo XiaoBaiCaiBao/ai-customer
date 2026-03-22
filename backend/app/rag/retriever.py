@@ -8,6 +8,8 @@ RAG 检索层 — 只读，知识库由外部独立服务写入
   [{"content": "...", "source": "产品手册.pdf", "score": 0.87}, ...]
 """
 
+from __future__ import annotations
+
 import httpx
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import ScoredPoint

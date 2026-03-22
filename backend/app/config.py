@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 
@@ -23,9 +25,6 @@ class Settings(BaseSettings):
     # 产研通知接口
     NOTIFY_API_URL: str = ""
     NOTIFY_API_KEY: str = ""
-
-    # 存储模式：True=内存（本地开发），False=MongoDB（生产）
-    USE_MEMORY: bool = True
 
     # CORS
     CORS_ORIGINS: str = "http://localhost:5173"

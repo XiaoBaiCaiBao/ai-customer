@@ -94,14 +94,12 @@
 <script setup>
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { useChatStore } from '../stores/chat'
 import AppHeader from '../components/AppHeader.vue'
-import btnLightLeft from '../assets/login/btn-light-left.svg'
-import btnLightRight from '../assets/login/btn-light-right.svg'
-import btnMask from '../assets/login/btn-mask.png'
 import star from '../assets/login/star.svg'
 
 const router = useRouter()
-
+const chatStore = useChatStore()
 const email = ref('')
 const password = ref('')
 const showPassword = ref(false)
@@ -110,15 +108,26 @@ const errorMsg = ref('')
 
 async function handleLogin() {
   errorMsg.value = ''
-  // if (!email.value || !password.value) {
-  //   errorMsg.value = '请填写邮箱和密码'
-  //   return
-  // }
+  if (!email.value || !password.value) {
+    errorMsg.value = '请填写邮箱和密码'
+    return
+  }
   isLoading.value = true
   try {
-    // TODO: 接入实际登录接口
-    // await new Promise(resolve => setTimeout(resolve, 1000))
-    router.push('/conversation')
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: email.value, password: password.value })
+    })
+    const data = await res.json()
+    if (!res.ok) {
+      throw new Error(data.detail || '登录失败，请重试')
+    }
+    localStorage.setItem('chat_token', data.access_token)
+    localStorage.setItem('chat_user_id', data.user_id)
+    localStorage.setItem('chat_user_role', data.role)
+    chatStore.refreshUser()
+    router.push('/chat') // 暂时跳到 chat 页面
   } catch (e) {
     errorMsg.value = e?.message || '登录失败，请重试'
   } finally {
