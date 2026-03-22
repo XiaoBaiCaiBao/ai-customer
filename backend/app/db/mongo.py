@@ -5,15 +5,25 @@
 """
 
 from datetime import datetime, timezone
-
+import hashlib
 from motor.motor_asyncio import AsyncIOMotorClient
-
 from app.config import get_settings
-
 
 def _client() -> tuple[AsyncIOMotorClient, str]:
     s = get_settings()
     return AsyncIOMotorClient(s.MONGODB_URL), s.MONGODB_DB
+
+def hash_password(password: str) -> str:
+    """简单的密码 hash 示例（生产建议用 passlib + bcrypt）"""
+    return hashlib.sha256(password.encode()).hexdigest()
+
+async def get_user_by_email(email: str) -> dict | None:
+    client, db_name = _client()
+    try:
+        return await client[db_name].users.find_one({"email": email})
+    finally:
+        client.close()
+
 
 
 async def get_history(session_id: str, user_id: str) -> list[dict]:
