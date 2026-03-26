@@ -26,18 +26,18 @@ async def get_user_by_email(email: str) -> dict | None:
 
 
 
-async def get_history(session_id: str, user_id: str) -> list[dict]:
+async def get_history(session_id: str, user_id: str) -> tuple[list[dict], dict]:
     client, db_name = _client()
     try:
         doc = await client[db_name].conversations.find_one({"session_id": session_id})
         if not doc or doc.get("user_id") != user_id:
-            return []
-        return doc.get("messages", [])[-20:]
+            return [], {}
+        return doc.get("messages", [])[-20:], doc.get("dialog_state", {})
     finally:
         client.close()
 
 
-async def append_messages(session_id: str, user_id: str, new_messages: list[dict]) -> None:
+async def append_messages(session_id: str, user_id: str, new_messages: list[dict], dialog_state: dict | None = None) -> None:
     client, db_name = _client()
     try:
         existing = await client[db_name].conversations.find_one({"session_id": session_id})
@@ -45,13 +45,17 @@ async def append_messages(session_id: str, user_id: str, new_messages: list[dict
             return
 
         now = datetime.now(timezone.utc)
+        update_data = {
+            "$set": {"user_id": user_id, "updated_at": now},
+            "$setOnInsert": {"created_at": now},
+            "$push": {"messages": {"$each": new_messages}},
+        }
+        if dialog_state is not None:
+            update_data["$set"]["dialog_state"] = dialog_state
+            
         await client[db_name].conversations.update_one(
             {"session_id": session_id},
-            {
-                "$set": {"user_id": user_id, "updated_at": now},
-                "$setOnInsert": {"created_at": now},
-                "$push": {"messages": {"$each": new_messages}},
-            },
+            update_data,
             upsert=True,
         )
     finally:

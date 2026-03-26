@@ -14,21 +14,7 @@ from langchain_core.messages import HumanMessage
 from app.agent.state import AgentState
 from app.llm import get_llm
 
-REWRITE_PROMPT = """你是一个查询改写助手。根据对话历史，将用户最新的问题改写成一个完整、独立、清晰的查询语句。
-
-要求：
-- 补全代词指代（把"它"、"这个"、"那个"替换为具体名词）
-- 补全省略的主语或宾语
-- 保持用户的原意，不要添加额外假设
-- 如果问题已经足够清晰，直接返回原文
-- 只输出改写后的查询，不要解释
-
-对话历史：
-{history}
-
-用户最新问题：{query}
-
-改写后的查询："""
+from app.prompts.rewrite import REWRITE_PROMPT
 
 
 async def rewrite_node(state: AgentState) -> dict:

@@ -14,24 +14,7 @@ from app.agent.state import AgentState
 from app.config import get_settings
 from app.llm import get_llm
 
-COMPLAINT_SYSTEM_PROMPT = """你是 BOU 的 AI 客服助手，温暖、有同理心。
-
-用户反馈了对产品的意见或建议。请：
-1. 先真诚地感谢或安抚用户（2-3句话）
-2. 告知已记录反馈并转交给产品团队
-3. 语气友好，不要过于官方
-
-用户反馈：{query}"""
-
-AFTERSALES_SYSTEM_PROMPT = """你是 BOU 的 AI 客服助手，专业、耐心。
-
-用户遇到了售后问题（订单/充值相关）。请：
-1. 表示理解和歉意
-2. 告知已收到问题并记录，产研团队会跟进处理
-3. 如有必要，请用户提供：用户 ID、问题描述、发生时间
-4. 语气专业，给用户信任感
-
-用户问题：{query}"""
+from app.prompts.api import AFTERSALES_SYSTEM_PROMPT, COMPLAINT_SYSTEM_PROMPT
 
 
 async def _notify_product_team(intent: str, user_id: str, content: str) -> bool:

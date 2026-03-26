@@ -17,7 +17,9 @@ from langchain_core.messages import HumanMessage, AIMessage
 
 from app.agent.graph import agent_graph
 from app.agent.state import AgentState
+from app.agent.memory import compress_history, trigger_ltm_update
 from app.db.mongo import get_history, append_messages, clear_history
+import asyncio
 from app.api.auth import get_current_user
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -34,7 +36,7 @@ async def chat_stream(req: ChatRequest, current_user: dict = Depends(get_current
     session_id = req.session_id or str(uuid.uuid4())
 
     # 加载历史对话
-    history = await get_history(session_id, user_id)
+    history, dialog_state = await get_history(session_id, user_id)
     history_messages = [
         HumanMessage(content=m["content"]) if m["role"] == "user"
         else AIMessage(content=m["content"])
@@ -49,6 +51,8 @@ async def chat_stream(req: ChatRequest, current_user: dict = Depends(get_current
         "intent": "unknown",
         "confidence": 0.0,
         "needs_clarification": False,
+        "dialog_state": dialog_state,
+        "missing_slots": [],
         "rag_results": [],
         "api_response": "",
         "react_steps": [],
@@ -65,9 +69,23 @@ async def chat_stream(req: ChatRequest, current_user: dict = Depends(get_current
         final_answer_nodes = {"rag", "api_call", "chat_respond", "web_search", "react"}
         streaming_node: str | None = None
 
+        # 收集最后一个状态的 dialog_state
+        final_dialog_state = None
+        
         async for event in agent_graph.astream_events(initial_state, version="v2"):
             event_type = event["event"]
             node_name = event.get("metadata", {}).get("langgraph_node", "")
+            
+            # 保存最后一次遇到的完整 dialog_state
+            if "state" in event.get("data", {}):
+                state_data = event["data"]["state"]
+                if isinstance(state_data, dict) and "dialog_state" in state_data:
+                    final_dialog_state = state_data["dialog_state"]
+            # 有时 state 在 output 里
+            elif "output" in event.get("data", {}):
+                output_data = event["data"]["output"]
+                if isinstance(output_data, dict) and "dialog_state" in output_data:
+                    final_dialog_state = output_data["dialog_state"]
 
             # ── 流式 token（只推送来自最终回复节点的 token）──
             if event_type == "on_chat_model_stream" and node_name in final_answer_nodes:
@@ -117,11 +135,23 @@ async def chat_stream(req: ChatRequest, current_user: dict = Depends(get_current
         # 保存本轮对话到 MongoDB
         full_response = "".join(collected_tokens)
         if full_response:
-            await append_messages(session_id, user_id, [
-                {"role": "user", "content": req.message},
-                {"role": "assistant", "content": full_response},
-            ])
-
+            await append_messages(
+                session_id, 
+                user_id, 
+                [
+                    {"role": "user", "content": req.message},
+                    {"role": "assistant", "content": full_response},
+                ],
+                dialog_state=final_dialog_state
+            )
+            
+            # 后台异步执行短期记忆压缩
+            asyncio.create_task(compress_history(session_id, user_id))
+            
+            # 后台异步更新长期记忆（脚手架）
+            if final_dialog_state:
+                asyncio.create_task(trigger_ltm_update(user_id, session_id, final_dialog_state))
+                
         yield f"data: {json.dumps({'type': 'done', 'session_id': session_id})}\n\n"
 
     return StreamingResponse(
@@ -140,7 +170,7 @@ async def get_chat_history(
     current_user: dict = Depends(get_current_user),
 ):
     user_id = current_user["user_id"]
-    messages = await get_history(session_id, user_id)
+    messages, _ = await get_history(session_id, user_id)
     return {"session_id": session_id, "messages": messages}
 
 @router.delete("/history")

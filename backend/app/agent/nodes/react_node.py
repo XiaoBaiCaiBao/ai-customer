@@ -13,7 +13,7 @@
 工具列表（MOCK，模拟真实游戏后台）:
   - get_user_recent_orders(user_id)
   - check_user_assets(user_id)
-  - trigger_manual_asset_compensation(user_id, item_type)
+  - submit_work_order(user_id, issue_type, description, order_id)
 
 思考步骤通过 adispatch_custom_event("thinking_step", ...) 实时推送到前端。
 """
@@ -26,6 +26,7 @@ from langchain_core.callbacks.manager import adispatch_custom_event
 from langchain_core.tools import tool
 from app.agent.state import AgentState
 from app.llm import get_llm
+from app.prompts.react import REACT_SYSTEM_PROMPT
 
 # ──────────────────────────────────────────
 # Mock 工具定义
@@ -67,47 +68,28 @@ def check_user_assets(user_id: str) -> str:
 
 
 @tool
-def trigger_manual_asset_compensation(user_id: str, item_type: str) -> str:
+def submit_work_order(user_id: str, issue_type: str, description: str, order_id: str = "") -> str:
     """
-    手动触发资产补偿，适用于订单扣款成功但权益未到账的情况。
-    item_type 可选: 'monthly_card'（月卡）, 'stamina'（体力值）, 'coins'（积分）
+    提交售后工单给产研团队，适用于订单扣款成功但权益未到账等异常情况。
+    参数：
+    - user_id: 用户ID
+    - issue_type: 问题类型（如：月卡未到账、体力异常等）
+    - description: 问题的详细描述
+    - order_id: 相关订单号（如果有）
     """
-    txn_id = "TXN_" + "".join(random.choices(string.digits, k=10))
+    ticket_id = "TICKET_" + "".join(random.choices(string.digits, k=8))
     mock = {
         "success": True,
-        "transaction_id": txn_id,
+        "ticket_id": ticket_id,
         "user_id": user_id,
-        "item_type": item_type,
-        "items_granted": {
-            "stamina": 150,
-            "monthly_card_days": 30,
-        },
-        "message": "补发成功，权益已实时下发",
+        "issue_type": issue_type,
+        "message": f"工单提交成功，产研团队将尽快核实。工单号: {ticket_id}",
     }
     return json.dumps(mock, ensure_ascii=False)
 
 
-TOOLS = [get_user_recent_orders, check_user_assets, trigger_manual_asset_compensation]
+TOOLS = [get_user_recent_orders, check_user_assets, submit_work_order]
 TOOLS_MAP = {t.name: t for t in TOOLS}
-
-# ──────────────────────────────────────────
-# ReAct 系统提示词
-# ──────────────────────────────────────────
-
-REACT_SYSTEM_PROMPT = """你是 BOU 的 AI 客服助手，具备查询游戏后台和执行补偿操作的权限。
-
-你的目标是帮助用户解决售后/账单/资产异常问题。请严格按照以下步骤执行：
-1. 先查询订单状态确认是否扣款成功
-2. 再检查用户资产确认权益是否到账
-3. 如果扣款成功但权益未到账，直接触发补偿
-4. 用温暖、有同理心的语气告知用户结果，给予情绪安抚
-
-重要原则：
-- 必须先查证再操作，不能猜测
-- 如果订单未扣款，不要触发补偿
-- 每次工具调用后仔细分析返回结果再决策
-- 最终回复要拟人化，提到具体流水号，让用户放心"""
-
 
 async def react_node(state: AgentState) -> dict:
     query = state.get("rewritten_query") or state["messages"][-1].content
