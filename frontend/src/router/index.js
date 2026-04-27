@@ -2,10 +2,11 @@ import { createRouter, createWebHistory } from 'vue-router'
 import ChatView from '../views/ChatView.vue'
 import LoginView from '../views/LoginView.vue'
 import ConversationListView from '../views/ConversationListView.vue'
+import { hasValidLocalAuth, clearLocalAuth } from '../utils/auth'
 
 const routes = [
-  { path: '/', redirect: '/login' },
-  { path: '/login', component: LoginView },
+  { path: '/', component: LoginView },
+  { path: '/login', redirect: '/' },
   { path: '/conversation', component: ConversationListView, meta: { requiresAuth: true } },
   { path: '/chat', component: ChatView, meta: { requiresAuth: true } },
 ]
@@ -16,12 +17,20 @@ const router = createRouter({
 })
 
 router.beforeEach((to, from, next) => {
-  const token = localStorage.getItem('chat_token')
-  if (to.meta.requiresAuth && !token) {
-    next('/login')
-  } else {
-    next()
+  const isAuthed = hasValidLocalAuth()
+  if (!isAuthed) {
+    clearLocalAuth()
   }
+
+  if (to.meta.requiresAuth && !isAuthed) {
+    next('/')
+    return
+  }
+  if ((to.path === '/' || to.path === '/login') && isAuthed) {
+    next('/chat')
+    return
+  }
+  next()
 })
 
 export default router

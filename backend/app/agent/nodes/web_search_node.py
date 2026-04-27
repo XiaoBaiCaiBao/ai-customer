@@ -18,6 +18,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.callbacks.manager import adispatch_custom_event
 from app.agent.state import AgentState
 from app.llm import get_llm
+from app.message_utils import build_multimodal_prompt, get_message_text
 
 from app.prompts.web_search import (
     WEB_SEARCH_DEFAULT_PROMPT as DEFAULT_PROMPT,
@@ -77,7 +78,8 @@ def _parse_weather(data: dict, city: str) -> str:
 
 
 async def web_search_node(state: AgentState) -> dict:
-    query = state.get("rewritten_query") or state["messages"][-1].content
+    latest_message = state["messages"][-1]
+    query = state.get("rewritten_query") or get_message_text(latest_message)
 
     # ── Step 1: Thought ──
     await adispatch_custom_event(
@@ -170,7 +172,7 @@ async def web_search_node(state: AgentState) -> dict:
         llm = get_llm(streaming=True)
         response = await llm.ainvoke([
             SystemMessage(content=DEFAULT_PROMPT),
-            HumanMessage(content=query),
+            build_multimodal_prompt(query, latest_message),
         ])
 
     return {"messages": [AIMessage(content=response.content)]}

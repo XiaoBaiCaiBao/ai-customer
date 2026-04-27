@@ -16,8 +16,7 @@ frontend/dist/
 .idea/
 
 # 知识库原始文档（不提交，部署时在服务器上单独维护）
-data/
-doc/
+bou-doc/
 
 # Docker volumes (本地数据)
 qdrant_data/

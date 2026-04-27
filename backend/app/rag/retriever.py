@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import httpx
 from qdrant_client import AsyncQdrantClient
-from qdrant_client.models import ScoredPoint
 from app.config import get_settings
+from app.rag.volcengine_kb import retrieve_from_volcengine_kb
 
 _async_client: AsyncQdrantClient | None = None
 
@@ -54,6 +54,9 @@ async def retrieve(query: str, top_k: int = 5) -> list[dict]:
     """
     s = get_settings()
     try:
+        if s.RAG_PROVIDER == "volcengine_kb":
+            return await retrieve_from_volcengine_kb(query, top_k=top_k)
+
         query_vector = await _embed_query(query)
 
         client = _get_async_client()

@@ -84,10 +84,110 @@
         </transition>
       </div>
 
+      <!-- ── RAG 召回结果面板 ── -->
+      <div
+        v-if="developerMode && message.ragResults && message.ragResults.length > 0"
+        class="mb-2 rounded-xl overflow-hidden"
+        style="background: rgba(255,255,255,0.035); border: 1px solid rgba(255,255,255,0.08);"
+      >
+        <button
+          @click="ragExpanded = !ragExpanded"
+          class="w-full flex items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-white/5"
+        >
+          <span class="text-xs">📚</span>
+          <span class="text-xs font-medium text-white/50 flex-1">
+            {{ `召回片段 · ${message.ragResults.length} 条` }}
+          </span>
+          <svg
+            class="w-3.5 h-3.5 text-white/30 transition-transform duration-200 flex-shrink-0"
+            :class="ragExpanded ? 'rotate-180' : ''"
+            fill="none" stroke="currentColor" viewBox="0 0 24 24"
+          >
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+          </svg>
+        </button>
+
+        <transition
+          enter-active-class="transition-all duration-200 ease-out"
+          enter-from-class="opacity-0 max-h-0"
+          enter-to-class="opacity-100 max-h-[700px]"
+          leave-active-class="transition-all duration-150 ease-in"
+          leave-from-class="opacity-100 max-h-[700px]"
+          leave-to-class="opacity-0 max-h-0"
+        >
+          <div v-if="ragExpanded" class="px-3 pb-3 space-y-2 overflow-hidden">
+            <div v-if="message.ragQuery" class="text-[11px] text-white/40 break-words">
+              检索词：<span class="text-emerald-300/80 font-mono">{{ message.ragQuery }}</span>
+            </div>
+            <div
+              v-for="(item, i) in message.ragResults"
+              :key="i"
+              class="rounded-lg border border-white/8 bg-black/10 p-2.5 space-y-1.5"
+            >
+              <div class="flex items-center gap-2 text-[10px] text-white/45">
+                <span class="px-1.5 py-0.5 rounded-full bg-white/6 text-white/55">{{ item.source || '未知来源' }}</span>
+                <span v-if="item.section" class="truncate">{{ item.section }}</span>
+                <span class="ml-auto text-amber-300/75">score {{ formatScore(item.score) }}</span>
+              </div>
+              <div class="text-[11px] leading-relaxed text-white/70 whitespace-pre-wrap break-words line-clamp-6">
+                {{ item.content }}
+              </div>
+            </div>
+          </div>
+        </transition>
+      </div>
+
+      <!-- ── Developer Mode 面板 ── -->
+      <div
+        v-if="developerMode && hasDebugInfo"
+        class="mb-2 rounded-xl overflow-hidden"
+        style="background: rgba(16,185,129,0.06); border: 1px solid rgba(16,185,129,0.18);"
+      >
+        <button
+          @click="debugExpanded = !debugExpanded"
+          class="w-full flex items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-emerald-400/5"
+        >
+          <span class="text-xs">🛠</span>
+          <span class="text-xs font-medium text-emerald-200/70 flex-1">开发者模式</span>
+          <svg
+            class="w-3.5 h-3.5 text-emerald-100/30 transition-transform duration-200 flex-shrink-0"
+            :class="debugExpanded ? 'rotate-180' : ''"
+            fill="none" stroke="currentColor" viewBox="0 0 24 24"
+          >
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+          </svg>
+        </button>
+
+        <transition
+          enter-active-class="transition-all duration-200 ease-out"
+          enter-from-class="opacity-0 max-h-0"
+          enter-to-class="opacity-100 max-h-[600px]"
+          leave-active-class="transition-all duration-150 ease-in"
+          leave-from-class="opacity-100 max-h-[600px]"
+          leave-to-class="opacity-0 max-h-0"
+        >
+          <div v-if="debugExpanded" class="px-3 pb-3 space-y-2 overflow-hidden text-[11px] leading-relaxed">
+            <div v-if="message.rewrittenQuery" class="break-words text-white/65">
+              <span class="text-emerald-300/85 font-semibold mr-1">Rewrite</span>
+              <span class="font-mono text-emerald-200/75">{{ message.rewrittenQuery }}</span>
+            </div>
+            <div v-if="message.intent" class="break-words text-white/65">
+              <span class="text-emerald-300/85 font-semibold mr-1">Intent</span>
+              <span>{{ message.intent }}</span>
+            </div>
+            <div v-if="message.ragProvider" class="break-words text-white/65">
+              <span class="text-emerald-300/85 font-semibold mr-1">RAG</span>
+              <span class="font-mono">{{ message.ragProvider }}</span>
+              <span class="text-white/35"> · {{ message.ragResultCount || 0 }} chunks</span>
+            </div>
+          </div>
+        </transition>
+      </div>
+
       <!-- ── 回复气泡 ── -->
       <div
         v-if="message.content || (message.streaming && !(message.thinkingSteps && message.thinkingSteps.length > 0))"
-        class="relative px-4 py-3 rounded-tr-2xl rounded-tl-2xl rounded-br-2xl text-[rgba(255,255,255,0.9)] text-sm leading-relaxed backdrop-blur-md"
+        class="relative w-fit max-w-full px-4 py-3 rounded-tr-2xl rounded-tl-2xl rounded-br-2xl text-[rgba(255,255,255,0.9)] text-sm leading-relaxed backdrop-blur-md"
         :class="{ 'animate-pulse': message.streaming && !message.content }"
         style="background: rgba(92, 95, 255, 0.32); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);"
       >
@@ -140,9 +240,12 @@ import { ref, computed } from 'vue'
 
 const props = defineProps({
   message: { type: Object, required: true },
+  developerMode: { type: Boolean, default: false },
 })
 
 const thinkingExpanded = ref(true)
+const ragExpanded = ref(true)
+const debugExpanded = ref(true)
 
 const timeStr = computed(() => {
   const d = new Date()
@@ -159,6 +262,14 @@ const parsedBullets = computed(() => {
   }
   return bullets
 })
+
+const hasDebugInfo = computed(() =>
+  Boolean(
+    props.message.rewrittenQuery ||
+    props.message.intent ||
+    props.message.ragProvider
+  )
+)
 
 // ── 意图标签 ──
 const INTENT_LABELS = {
@@ -215,5 +326,11 @@ function stepLabelClass(type) {
     observation: 'text-amber-400',
     final:       'text-green-400',
   }[type] || 'text-white/40'
+}
+
+function formatScore(score) {
+  const n = Number(score)
+  if (Number.isNaN(n)) return '-'
+  return n.toFixed(4)
 }
 </script>

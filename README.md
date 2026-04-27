@@ -151,6 +151,24 @@ QDRANT_URL=http://qdrant:6333
 MONGODB_URL=mongodb://mongodb:27017
 ```
 
+如果你想直接调用火山引擎托管知识库，而不是本地 Qdrant，可在 `backend/.env` 中额外配置：
+
+```bash
+RAG_PROVIDER=volcengine_kb
+VOLC_KB_AK=your-ak
+VOLC_KB_SK=your-sk
+VOLC_KB_COLLECTION_NAME=你的知识库名称
+
+# 可选
+VOLC_KB_ACCOUNT_ID=
+VOLC_KB_PROJECT=default
+VOLC_KB_HOST=api-knowledgebase.mlp.cn-beijing.volces.com
+VOLC_KB_REGION=cn-north-1
+VOLC_KB_SERVICE=air
+```
+
+此时后端会直接调用火山引擎知识库检索接口，保留现有 RAG 生成链路；`Qdrant` 配置可继续保留作为本地方案。
+
 ### 4. 启动全栈服务
 
 ```bash

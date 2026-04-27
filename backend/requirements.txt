@@ -17,6 +17,10 @@ motor>=3.7.0
 
 # HTTP client
 httpx>=0.28.1
+volcengine>=1.0.178
+
+# MCP server
+mcp>=1.0.0
 
 # Utils
 python-multipart>=0.0.20

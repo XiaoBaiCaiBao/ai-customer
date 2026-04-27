@@ -4,14 +4,12 @@ from langchain_core.messages import BaseMessage
 
 
 IntentType = Literal[
-    "product_info",   # 产品功能咨询
-    "usage_issue",    # 使用遇到问题
-    "complaint",      # 吐槽/产品建议
-    "aftersales",     # 售后/账单问题
-    "event",          # 运营活动
-    "web_search",     # 联网查询
-    "chat",           # 闲聊
-    "unknown",        # 未识别
+    "app_info",        # 产品功能疑问
+    "usage_issue",     # 使用遇到问题
+    "user_voice",      # 吐槽/产品建议/投诉（原 app_advice）
+    "aftersales",      # 售后问题（粗粒度，Planner 内细化为子类型）
+    "chat_respond",    # 闲聊（原 chat）
+    "unknown_respond", # 命中敏感词/未识别（原 unknown）
 ]
 
 
@@ -30,7 +28,7 @@ class AgentState(TypedDict):
     intent: IntentType
     confidence: float
 
-    # 路由目标（> 0.85 置信度下，Router 节点得出的后续节点）
+    # Planner 路由决策（route_hint: rag | mcp_single | executor_react | clarify）
     route_destination: str
 
     # RAG 检索结果
@@ -42,6 +40,11 @@ class AgentState(TypedDict):
     # 对话状态追踪 (DST)，存储多轮中提取到的关键槽位
     dialog_state: dict
     missing_slots: list[str]
+    needs_clarification: bool
+    clarify_question: str
 
     # ReAct 推理步骤（用于 UI 展示思考过程）
     react_steps: list[dict]
+
+    # Skills 链路执行结果
+    skills_result: dict

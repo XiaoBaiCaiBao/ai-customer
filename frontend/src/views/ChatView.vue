@@ -11,19 +11,21 @@
     </div>
 
     <!-- Header -->
-    <AppHeader title="AI助手" :show-back="true">
+    <AppHeader title="你的小客服" :show-back="true">
       <template #right>
         <div class="flex items-center gap-2">
           <button
-            v-if="isAdmin"
-            @click="showAdminModal = true"
-            class="text-xs px-2 py-1 border border-accent rounded-lg text-accent hover:bg-accent/20 transition-colors"
+            @click="chatStore.toggleDeveloperMode()"
+            class="text-xs px-2 py-1 border rounded-lg transition-colors whitespace-nowrap"
+            :class="chatStore.developerMode
+              ? 'border-emerald-400 text-emerald-300 bg-emerald-500/10'
+              : 'border-gray-500 text-gray-400 hover:text-white'"
           >
-            管理
+            调试
           </button>
           <button
             @click="logout"
-            class="text-xs px-2 py-1 border border-gray-500 rounded-lg text-gray-400 hover:text-white transition-colors"
+            class="text-xs px-2 py-1 border border-gray-500 rounded-lg text-gray-400 hover:text-white transition-colors whitespace-nowrap"
           >
             退出
           </button>
@@ -31,57 +33,25 @@
       </template>
     </AppHeader>
 
-    <!-- Admin 管理弹窗 -->
-    <div v-if="showAdminModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
-      <div class="bg-surface-card border border-surface-border rounded-2xl w-full max-w-sm p-5 space-y-4">
-        <div class="flex items-center justify-between">
-          <h2 class="text-lg font-bold">管理员控制台</h2>
-          <button @click="showAdminModal = false" class="text-gray-400 hover:text-white">✕</button>
-        </div>
-        
-        <div class="space-y-3">
-          <div class="text-sm text-gray-400">选择要清除记录的用户邮箱：</div>
-          <input
-            v-model="adminTargetUser"
-            type="text"
-            placeholder="输入邮箱或留空"
-            class="w-full h-10 rounded-xl bg-black/30 border border-surface-border px-3 text-sm text-white outline-none focus:border-accent"
-          />
-          <div class="flex gap-2">
-            <button
-              @click="clearUserHistory"
-              class="flex-1 bg-red-500/20 text-red-400 hover:bg-red-500/40 py-2 rounded-xl text-sm transition-colors"
-            >
-              清除该用户记录
-            </button>
-            <button
-              @click="clearAllHistory"
-              class="flex-1 bg-red-500 text-white hover:bg-red-600 py-2 rounded-xl text-sm font-bold shadow-lg transition-colors"
-            >
-              清空全站记录
-            </button>
-          </div>
-          <p v-if="adminMsg" class="text-xs text-accent mt-2 text-center">{{ adminMsg }}</p>
-        </div>
-      </div>
-    </div>
-
     <!-- 消息列表 -->
     <div
       ref="scrollRef"
       class="flex-1 overflow-y-auto px-4 py-4 space-y-1 relative z-10"
     >
-      <!-- 欢迎消息 -->
-      <MessageBubble
-        v-if="chatStore.messages.length === 0"
-        :message="welcomeMessage"
-      />
+      <div class="flex justify-center py-4">
+        <div
+          class="px-4 py-2 rounded-2xl border border-surface-border bg-surface-card text-sm text-white/55 shadow-[0_8px_24px_rgba(0,0,0,0.16)] backdrop-blur-sm"
+        >
+          Hi，很高兴为你服务~
+        </div>
+      </div>
 
       <!-- 对话消息 -->
       <MessageBubble
         v-for="msg in chatStore.messages"
         :key="msg.id"
         :message="msg"
+        :developer-mode="chatStore.developerMode"
       />
 
       <!-- 思考中动画（无消息时显示，有消息后由 MessageBubble 内部处理） -->
@@ -164,19 +134,23 @@
           </svg>
         </button>
       </div>
+      <p v-if="panelNotice" class="text-xs text-white/60 pt-2 px-1">{{ panelNotice }}</p>
     </div>
 
     <!-- 更多 Panel（从底部滑入） -->
     <transition
-      enter-active-class="transition-all duration-300 ease-out"
-      enter-from-class="translate-y-full opacity-0"
-      enter-to-class="translate-y-0 opacity-100"
-      leave-active-class="transition-all duration-200 ease-in"
-      leave-from-class="translate-y-0 opacity-100"
-      leave-to-class="translate-y-full opacity-0"
+      enter-active-class="overflow-hidden transition-[max-height,opacity,transform] duration-300 ease-linear"
+      enter-from-class="max-h-0 translate-y-4 opacity-0"
+      enter-to-class="max-h-64 translate-y-0 opacity-100"
+      leave-active-class="overflow-hidden transition-[max-height,opacity,transform] duration-300 ease-linear"
+      leave-from-class="max-h-64 translate-y-0 opacity-100"
+      leave-to-class="max-h-0 translate-y-4 opacity-0"
     >
-      <div v-if="showPanel" class="flex-shrink-0 border-surface-border px-6 pt-1 relative z-10">
-        <div class="flex gap-6">
+      <div
+        v-if="showPanel"
+        class="flex-shrink-0 border-surface-border px-6 pt-1 relative z-10 will-change-[max-height,transform,opacity]"
+      >
+        <div class="flex gap-6 flex-wrap pb-6">
           <!-- 图片上传 -->
           <button
             @click="triggerImageUpload"
@@ -192,14 +166,30 @@
             <span class="text-xs text-gray-400 group-hover:text-white transition-colors">图片</span>
           </button>
 
-          <!-- 重启（预留） -->
-          <button class="flex flex-col items-center gap-2 group opacity-50 cursor-not-allowed">
-            <div class="w-14 h-14 rounded-2xl bg-surface-card border border-surface-border flex items-center justify-center">
-              <svg class="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <button
+            @click="restartSession"
+            :disabled="sessionActionLoading"
+            class="flex flex-col items-center gap-2 group disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <div class="w-14 h-14 rounded-2xl bg-surface-card border border-surface-border flex items-center justify-center group-hover:border-accent transition-all">
+              <svg class="w-6 h-6 text-gray-300 group-hover:text-white transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
               </svg>
             </div>
-            <span class="text-xs text-gray-500">重启</span>
+            <span class="text-xs text-gray-400 group-hover:text-white transition-colors">重启会话</span>
+          </button>
+
+          <button
+            @click="resetChat"
+            :disabled="sessionActionLoading"
+            class="flex flex-col items-center gap-2 group disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <div class="w-14 h-14 rounded-2xl bg-surface-card border border-surface-border flex items-center justify-center group-hover:border-red-400 transition-all">
+              <svg class="w-6 h-6 text-gray-300 group-hover:text-red-300 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M10 11v6m4-6v6m-7 4h10a2 2 0 002-2V7H5v12a2 2 0 002 2Zm9-14h-3.5l-1-1h-3l-1 1H4"/>
+              </svg>
+            </div>
+            <span class="text-xs text-gray-400 group-hover:text-red-300 transition-colors">重置聊天</span>
           </button>
         </div>
       </div>
@@ -225,6 +215,7 @@ import { useChatStore } from '../stores/chat'
 import AppHeader from '../components/AppHeader.vue'
 import MessageBubble from '../components/MessageBubble.vue'
 import bgImage from '../assets/common/Rafayel.webp'
+import { clearLocalAuth } from '../utils/auth'
 
 const route = useRoute()
 const router = useRouter()
@@ -235,73 +226,53 @@ const inputText = ref('')
 const scrollRef = ref(null)
 const showPanel = ref(false)
 const fileInputRef = ref(null)
-const pendingImages = ref([]) // [{ url: string, file: File }]
-
-const isAdmin = computed(() => localStorage.getItem('chat_user_role') === 'admin')
-const showAdminModal = ref(false)
-const adminTargetUser = ref('')
-const adminMsg = ref('')
-
-async function clearUserHistory() {
-  if (!adminTargetUser.value) {
-    adminMsg.value = '请输入用户邮箱'
-    return
-  }
-  adminMsg.value = '清理中...'
-  try {
-    const q = new URLSearchParams({ target_user_id: adminTargetUser.value })
-    const res = await fetch(`/api/admin/history/user?${q}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${localStorage.getItem('chat_token')}` }
-    })
-    const data = await res.json()
-    if (res.ok) {
-      adminMsg.value = data.message || '清理成功'
-      if (adminTargetUser.value === localStorage.getItem('chat_user_id')) {
-        chatStore.messages = [] // 本人如果在看，顺便清一下列表
-      }
-    } else {
-      adminMsg.value = data.error || '清理失败'
-    }
-  } catch (e) {
-    adminMsg.value = '请求失败'
-  }
-}
-
-async function clearAllHistory() {
-  if (!confirm('确定要清空全站所有对话记录吗？')) return
-  adminMsg.value = '清理中...'
-  try {
-    const res = await fetch(`/api/admin/history/all`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${localStorage.getItem('chat_token')}` }
-    })
-    const data = await res.json()
-    if (res.ok) {
-      adminMsg.value = data.message || '全部清理成功'
-      chatStore.messages = [] // 全清了当前肯定也空了
-    } else {
-      adminMsg.value = data.error || '清理失败'
-    }
-  } catch (e) {
-    adminMsg.value = '请求失败'
-  }
-}
+const pendingImages = ref([]) // [{ url: string, dataUrl: string, name: string }]
+const sessionActionLoading = ref(false)
+const panelNotice = ref('')
 
 function logout() {
-  localStorage.removeItem('chat_token')
-  localStorage.removeItem('chat_user_id')
-  localStorage.removeItem('chat_user_role')
-  chatStore.messages = []
+  clearLocalAuth()
+  chatStore.resetSessionState()
   chatStore.refreshUser()
-  router.push('/login')
+  router.push('/')
 }
 
-const welcomeMessage = {
-  role: 'assistant',
-  content: '你好，我是你的AI助手，有什么可以帮你的吗？',
-  id: 'welcome',
-  streaming: false,
+async function restartSession() {
+  if (sessionActionLoading.value) return
+  if (!confirm('确定要重启当前会话吗？这会删除当前会话的短期记忆和聊天上下文。')) return
+
+  sessionActionLoading.value = true
+  panelNotice.value = '正在重启会话...'
+  try {
+    await chatStore.clearHistory()
+    pendingImages.value = []
+    inputText.value = ''
+    showPanel.value = false
+    panelNotice.value = '当前会话已重启，长期记忆保持不变。'
+  } catch {
+    panelNotice.value = '重启会话失败，请稍后重试。'
+  } finally {
+    sessionActionLoading.value = false
+  }
+}
+
+async function resetChat() {
+  if (sessionActionLoading.value) return
+  if (!confirm('确定要重置聊天吗？这会删除所有历史聊天记录以及当前保存的长短期记忆。')) return
+
+  sessionActionLoading.value = true
+  panelNotice.value = '正在重置聊天...'
+  try {
+    await chatStore.resetChat()
+    pendingImages.value = []
+    inputText.value = ''
+    showPanel.value = false
+    panelNotice.value = '聊天已重置。'
+  } catch {
+    panelNotice.value = '重置聊天失败，请稍后重试。'
+  } finally {
+    sessionActionLoading.value = false
+  }
 }
 
 const quickChips = [
@@ -339,18 +310,61 @@ function triggerImageUpload() {
   fileInputRef.value?.click()
 }
 
-function handleImageSelect(e) {
-  const files = Array.from(e.target.files || [])
-  files.forEach(file => {
-    const url = URL.createObjectURL(file)
-    pendingImages.value.push({ url, file })
+async function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result)
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(file)
   })
+}
+
+async function compressImageFile(file) {
+  const originalDataUrl = await readFileAsDataUrl(file)
+
+  if (file.type === 'image/gif') {
+    return originalDataUrl
+  }
+
+  const img = await new Promise((resolve, reject) => {
+    const el = new Image()
+    el.onload = () => resolve(el)
+    el.onerror = reject
+    el.src = originalDataUrl
+  })
+
+  const maxSide = 1600
+  const scale = Math.min(1, maxSide / Math.max(img.width, img.height))
+  const width = Math.max(1, Math.round(img.width * scale))
+  const height = Math.max(1, Math.round(img.height * scale))
+
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+
+  const ctx = canvas.getContext('2d')
+  ctx.drawImage(img, 0, 0, width, height)
+
+  return canvas.toDataURL('image/jpeg', 0.86)
+}
+
+async function handleImageSelect(e) {
+  const remaining = Math.max(0, 4 - pendingImages.value.length)
+  const files = Array.from(e.target.files || []).slice(0, remaining)
+  const images = await Promise.all(files.map(async file => {
+    const dataUrl = await compressImageFile(file)
+    return {
+      url: dataUrl,
+      dataUrl,
+      name: file.name,
+    }
+  }))
+  pendingImages.value.push(...images)
   e.target.value = ''
   showPanel.value = false
 }
 
 function removeImage(index) {
-  URL.revokeObjectURL(pendingImages.value[index].url)
   pendingImages.value.splice(index, 1)
 }
 
@@ -358,10 +372,8 @@ function handleSend() {
   const text = inputText.value.trim()
   if (!text && !pendingImages.value.length) return
 
-  // 将图片 URL 列表传入消息（仅展示用，后续可扩展为 base64 上传）
-  const images = pendingImages.value.map(i => i.url)
+  const images = pendingImages.value.map(i => i.dataUrl)
   inputText.value = ''
-  pendingImages.value.forEach(i => { /* 不revoke，消息气泡中还要展示 */ })
   pendingImages.value = []
   showPanel.value = false
 

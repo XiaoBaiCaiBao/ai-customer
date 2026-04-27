@@ -9,10 +9,11 @@
 """
 
 import httpx
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, SystemMessage
 from app.agent.state import AgentState
 from app.config import get_settings
 from app.llm import get_llm
+from app.message_utils import build_multimodal_prompt, get_message_text
 
 from app.prompts.api import AFTERSALES_SYSTEM_PROMPT, COMPLAINT_SYSTEM_PROMPT
 
@@ -39,7 +40,8 @@ async def _notify_product_team(intent: str, user_id: str, content: str) -> bool:
 
 async def api_node(state: AgentState) -> dict:
     intent = state.get("intent", "complaint")
-    query = state.get("rewritten_query") or state["messages"][-1].content
+    latest_message = state["messages"][-1]
+    query = state.get("rewritten_query") or get_message_text(latest_message)
     user_id = state.get("user_id", "anonymous")
 
     # 异步通知产研（不等待结果，不阻塞用户回复）
@@ -54,7 +56,7 @@ async def api_node(state: AgentState) -> dict:
     llm = get_llm(streaming=True)
     response = await llm.ainvoke([
         SystemMessage(content=system_prompt),
-        HumanMessage(content=query),
+        build_multimodal_prompt(query, latest_message),
     ])
 
     return {

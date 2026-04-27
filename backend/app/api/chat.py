@@ -18,7 +18,8 @@ from langchain_core.messages import HumanMessage, AIMessage
 from app.agent.graph import agent_graph
 from app.agent.state import AgentState
 from app.agent.memory import compress_history, trigger_ltm_update
-from app.db.mongo import get_history, append_messages, clear_history
+from app.db.mongo import get_history, append_messages, clear_history, clear_all_history
+from app.message_utils import make_user_message
 import asyncio
 from app.api.auth import get_current_user
 
@@ -28,6 +29,7 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 class ChatRequest(BaseModel):
     message: str
     session_id: str | None = None
+    images: list[str] = []
 
 @router.post("/stream")
 async def chat_stream(req: ChatRequest, current_user: dict = Depends(get_current_user)):
@@ -38,13 +40,13 @@ async def chat_stream(req: ChatRequest, current_user: dict = Depends(get_current
     # 加载历史对话
     history, dialog_state = await get_history(session_id, user_id)
     history_messages = [
-        HumanMessage(content=m["content"]) if m["role"] == "user"
+        make_user_message(m.get("content", ""), m.get("images", [])) if m["role"] == "user"
         else AIMessage(content=m["content"])
         for m in history
     ]
 
     initial_state: AgentState = {
-        "messages": history_messages + [HumanMessage(content=req.message)],
+        "messages": history_messages + [make_user_message(req.message, req.images)],
         "user_id": user_id,
         "session_id": session_id,
         "rewritten_query": "",
@@ -66,8 +68,16 @@ async def chat_stream(req: ChatRequest, current_user: dict = Depends(get_current
         intent_sent = False
         # 记录哪些节点产生了 token，用于过滤 ReAct 中间 LLM 调用的 token
         # （只有最终回复节点的 token 才推给前端）
-        final_answer_nodes = {"rag", "api_call", "chat_respond", "web_search", "react"}
-        streaming_node: str | None = None
+        final_answer_nodes = {
+            "rag",
+            "api_call",
+            "skills",
+            "chat_respond",
+            "clarify",
+            "unrecognized",
+            "web_search",
+            "react",
+        }
 
         # 收集最后一个状态的 dialog_state
         final_dialog_state = None
@@ -115,10 +125,30 @@ async def chat_stream(req: ChatRequest, current_user: dict = Depends(get_current
                     intent_sent = True
                     yield f"data: {json.dumps({'type': 'intent', 'intent': intent})}\n\n"
 
+            # ── 查询改写结果 ──
+            elif event_type == "on_chain_end" and node_name == "rewrite":
+                output = event["data"].get("output", {})
+                if isinstance(output, dict):
+                    rewritten_query = output.get("rewritten_query", "")
+                else:
+                    rewritten_query = ""
+                if rewritten_query:
+                    yield f"data: {json.dumps({'type': 'rewrite', 'rewritten_query': rewritten_query})}\n\n"
+
             # ── 思考步骤（RAG / web_search / react 节点发出的自定义事件）──
             elif event_type == "on_custom_event" and event.get("name") == "thinking_step":
                 step_data = event["data"]
                 yield f"data: {json.dumps({'type': 'thinking_step', **step_data})}\n\n"
+
+            # ── RAG 调试元信息 ──
+            elif event_type == "on_custom_event" and event.get("name") == "rag_meta":
+                meta_data = event["data"]
+                yield f"data: {json.dumps({'type': 'rag_meta', **meta_data})}\n\n"
+
+            # ── RAG 检索结果明细 ──
+            elif event_type == "on_custom_event" and event.get("name") == "rag_results":
+                rag_data = event["data"]
+                yield f"data: {json.dumps({'type': 'rag_results', **rag_data})}\n\n"
 
             # ── 节点结束时兜底处理：如果节点没有流式输出 token（比如 ReAct 节点使用的是非流式调用），
             # 就在节点结束时把最终结果一次性推给前端。
@@ -139,7 +169,7 @@ async def chat_stream(req: ChatRequest, current_user: dict = Depends(get_current
                 session_id, 
                 user_id, 
                 [
-                    {"role": "user", "content": req.message},
+                    {"role": "user", "content": req.message, "images": req.images},
                     {"role": "assistant", "content": full_response},
                 ],
                 dialog_state=final_dialog_state
@@ -180,4 +210,16 @@ async def delete_chat_history(
 ):
     user_id = current_user["user_id"]
     await clear_history(session_id, user_id)
-    return {"message": "ok"}
+    return {"message": "会话已重启"}
+
+
+@router.delete("/reset")
+async def reset_chat(
+    current_user: dict = Depends(get_current_user),
+):
+    user_id = current_user["user_id"]
+    deleted_count = await clear_all_history(user_id)
+    return {
+        "message": "聊天已重置",
+        "deleted_count": deleted_count,
+    }

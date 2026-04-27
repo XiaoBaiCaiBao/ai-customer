@@ -8,14 +8,18 @@
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.callbacks.manager import adispatch_custom_event
 from app.agent.state import AgentState
+from app.config import get_settings
 from app.rag.retriever import retrieve
 from app.llm import get_llm
+from app.message_utils import build_multimodal_prompt, get_message_text
 
 from app.prompts.rag import RAG_SYSTEM_PROMPT
 
 
 async def rag_node(state: AgentState) -> dict:
-    query = state.get("rewritten_query") or state["messages"][-1].content
+    latest_message = state["messages"][-1]
+    query = state.get("rewritten_query") or get_message_text(latest_message)
+    settings = get_settings()
 
     # ── Thought ──
     await adispatch_custom_event(
@@ -39,6 +43,24 @@ async def rag_node(state: AgentState) -> dict:
 
     results = await retrieve(query)
     state_update: dict = {"rag_results": results}
+
+    await adispatch_custom_event(
+        "rag_meta",
+        {
+            "provider": settings.RAG_PROVIDER,
+            "query": query,
+            "result_count": len(results),
+        },
+    )
+
+    if results:
+        await adispatch_custom_event(
+            "rag_results",
+            {
+                "query": query,
+                "results": results,
+            },
+        )
 
     # ── Observation ──
     if results:
@@ -76,7 +98,7 @@ async def rag_node(state: AgentState) -> dict:
     llm = get_llm(streaming=True)
     response = await llm.ainvoke([
         SystemMessage(content=RAG_SYSTEM_PROMPT.format(context=context)),
-        HumanMessage(content=query),
+        build_multimodal_prompt(query, latest_message),
     ])
 
     state_update["messages"] = [AIMessage(content=response.content)]

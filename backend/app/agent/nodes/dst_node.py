@@ -4,9 +4,9 @@
 """
 
 from pydantic import BaseModel, Field
-from langchain_core.messages import HumanMessage
 from app.agent.state import AgentState
 from app.llm import get_llm
+from app.message_utils import build_multimodal_prompt, get_message_text
 from app.prompts.dst import DST_PROMPT
 
 
@@ -20,7 +20,8 @@ async def dst_node(state: AgentState) -> dict:
         return {}
         
     intent = state.get("intent", "unknown")
-    query = state.get("rewritten_query") or state["messages"][-1].content
+    latest_message = state["messages"][-1]
+    query = state.get("rewritten_query") or get_message_text(latest_message)
     dialog_state = state.get("dialog_state", {})
     
     # 只有特定的 intent 我们才需要槽位
@@ -37,7 +38,9 @@ async def dst_node(state: AgentState) -> dict:
     )
     
     try:
-        result: DSTResult = await structured_llm.ainvoke([HumanMessage(content=prompt)])
+        result: DSTResult = await structured_llm.ainvoke([
+            build_multimodal_prompt(prompt, latest_message)
+        ])
         # 更新 dialog_state
         new_state = {**dialog_state}
         for k, v in result.slots.items():

@@ -24,8 +24,13 @@ async def chat_node(state: AgentState) -> dict:
 
 async def clarify_node(state: AgentState) -> dict:
     """代码实现：0.6 <= 置信度 <= 0.85，下发猜您想问卡片"""
-    # 实际业务中可根据当前 state["intent"] 去推荐相关问题，这里提供通用兜底示例
-    content = "我好像没完全明白您的意思，您是想问以下哪个问题呢？\n1. 账号充值及资产问题\n2. 产品功能怎么用\n3. 遇到报错或异常"
+    clarify_question = state.get("clarify_question")
+    if clarify_question:
+        content = clarify_question
+    else:
+        # 实际业务中可根据当前 state["intent"] 去推荐相关问题，这里提供通用兜底示例
+        content = "我好像没完全明白您的意思，您是想问以下哪个问题呢？\n1. 账号充值及资产问题\n2. 产品功能怎么用\n3. 遇到报错或异常"
+        
     msg = AIMessage(
         content=content,
         additional_kwargs={"ui_type": "guess_ask_card"}

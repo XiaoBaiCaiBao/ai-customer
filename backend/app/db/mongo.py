@@ -5,26 +5,14 @@
 """
 
 from datetime import datetime, timezone
-import hashlib
+
 from motor.motor_asyncio import AsyncIOMotorClient
+
 from app.config import get_settings
 
 def _client() -> tuple[AsyncIOMotorClient, str]:
     s = get_settings()
     return AsyncIOMotorClient(s.MONGODB_URL), s.MONGODB_DB
-
-def hash_password(password: str) -> str:
-    """简单的密码 hash 示例（生产建议用 passlib + bcrypt）"""
-    return hashlib.sha256(password.encode()).hexdigest()
-
-async def get_user_by_email(email: str) -> dict | None:
-    client, db_name = _client()
-    try:
-        return await client[db_name].users.find_one({"email": email})
-    finally:
-        client.close()
-
-
 
 async def get_history(session_id: str, user_id: str) -> tuple[list[dict], dict]:
     client, db_name = _client()
@@ -68,5 +56,14 @@ async def clear_history(session_id: str, user_id: str) -> None:
         await client[db_name].conversations.delete_one(
             {"session_id": session_id, "user_id": user_id}
         )
+    finally:
+        client.close()
+
+
+async def clear_all_history(user_id: str) -> int:
+    client, db_name = _client()
+    try:
+        result = await client[db_name].conversations.delete_many({"user_id": user_id})
+        return result.deleted_count
     finally:
         client.close()

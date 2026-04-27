@@ -1,9 +1,10 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import { ALLOWED_USER_ID, clearLocalAuth } from '../utils/auth'
 
 /** 与后端 ChatRequest.user_id 一致；多用户时在登录后设置 localStorage.chat_user_id */
 function readUserId() {
-  return localStorage.getItem('chat_user_id') || 'demo_user'
+  return localStorage.getItem('chat_user_id') || ''
 }
 
 function getAuthHeaders() {
@@ -11,11 +12,30 @@ function getAuthHeaders() {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
+async function ensureAuthorizedResponse(response) {
+  if (response.status === 401 || response.status === 403) {
+    clearLocalAuth()
+    window.location.href = '/'
+    throw new Error('unauthorized')
+  }
+  if (!response.ok) {
+    let detail = '请求失败'
+    try {
+      const data = await response.json()
+      detail = data?.detail || data?.message || detail
+    } catch {
+      // ignore
+    }
+    throw new Error(detail)
+  }
+}
+
 function sessionStorageKey(userId) {
-  return `chat_session_id_${userId}`
+  return `chat_session_id_${userId || 'guest'}`
 }
 
 function initialSessionId(userId) {
+  if (!userId) return null
   const k = sessionStorageKey(userId)
   let sid = localStorage.getItem(k)
   if (!sid) {
@@ -35,10 +55,17 @@ export const useChatStore = defineStore('chat', () => {
   const sessionId = ref(initialSessionId(userId.value) || null)
   const isThinking = ref(false)
   const currentIntent = ref(null)
+  const developerMode = ref(localStorage.getItem('chat_developer_mode') === '1')
 
   function refreshUser() {
     userId.value = readUserId()
     sessionId.value = initialSessionId(userId.value) || null
+  }
+
+  function resetSessionState() {
+    messages.value = []
+    sessionId.value = null
+    currentIntent.value = null
   }
 
   function addUserMessage(content, images = []) {
@@ -52,7 +79,11 @@ export const useChatStore = defineStore('chat', () => {
       id: Date.now(),
       streaming: true,
       thinkingSteps: [],  // 思考步骤列表
+      ragResults: [],
       intent: null,
+      rewrittenQuery: '',
+      ragProvider: '',
+      ragResultCount: 0,
     }
     messages.value.push(msg)
     return messages.value.length - 1
@@ -76,6 +107,32 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  function setRagResults(index, query, results) {
+    if (messages.value[index]) {
+      messages.value[index].ragQuery = query
+      messages.value[index].ragResults = results
+    }
+  }
+
+  function setRewrittenQuery(index, rewrittenQuery) {
+    if (messages.value[index]) {
+      messages.value[index].rewrittenQuery = rewrittenQuery
+    }
+  }
+
+  function setRagMeta(index, payload) {
+    if (messages.value[index]) {
+      messages.value[index].ragProvider = payload.provider || ''
+      messages.value[index].ragQuery = payload.query || messages.value[index].ragQuery
+      messages.value[index].ragResultCount = payload.result_count || 0
+    }
+  }
+
+  function toggleDeveloperMode() {
+    developerMode.value = !developerMode.value
+    localStorage.setItem('chat_developer_mode', developerMode.value ? '1' : '0')
+  }
+
   function finalizeMessage(index) {
     if (messages.value[index]) {
       messages.value[index].streaming = false
@@ -85,6 +142,7 @@ export const useChatStore = defineStore('chat', () => {
   async function sendMessage(text, images = []) {
     if (!text.trim() && !images.length) return
     if (isThinking.value) return
+    if (userId.value !== ALLOWED_USER_ID) return
 
     addUserMessage(text, images)
     isThinking.value = true
@@ -99,8 +157,19 @@ export const useChatStore = defineStore('chat', () => {
         body: JSON.stringify({
           message: text,
           session_id: sessionId.value,
+          images,
         }),
       })
+      if (response.status === 401 || response.status === 403) {
+        clearLocalAuth()
+        resetSessionState()
+        userId.value = ''
+        window.location.href = '/'
+        return
+      }
+      if (!response.ok) {
+        throw new Error('发送失败')
+      }
 
       const reader = response.body.getReader()
       const decoder = new TextDecoder()
@@ -123,12 +192,18 @@ export const useChatStore = defineStore('chat', () => {
             } else if (data.type === 'intent') {
               currentIntent.value = data.intent
               setMessageIntent(msgIndex, data.intent)
+            } else if (data.type === 'rewrite') {
+              setRewrittenQuery(msgIndex, data.rewritten_query)
             } else if (data.type === 'thinking_step') {
               appendThinkingStep(msgIndex, {
                 step_type: data.step_type,
                 step_num: data.step_num,
                 content: data.content,
               })
+            } else if (data.type === 'rag_meta') {
+              setRagMeta(msgIndex, data)
+            } else if (data.type === 'rag_results') {
+              setRagResults(msgIndex, data.query, data.results || [])
             } else if (data.type === 'done') {
               finalizeMessage(msgIndex)
             }
@@ -154,12 +229,24 @@ export const useChatStore = defineStore('chat', () => {
       const res = await fetch(`/api/chat/history?${q}`, {
         headers: getAuthHeaders()
       })
+      if (res.status === 401 || res.status === 403) {
+        clearLocalAuth()
+        resetSessionState()
+        userId.value = ''
+        window.location.href = '/'
+        return
+      }
+      if (!res.ok) return
       const data = await res.json()
       messages.value = data.messages.map((m, i) => ({
         ...m,
         id: i,
         thinkingSteps: [],
+        ragResults: [],
         intent: null,
+        rewrittenQuery: '',
+        ragProvider: '',
+        ragResultCount: 0,
       }))
     } catch {
       // 静默失败
@@ -167,16 +254,27 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   async function clearHistory() {
-    if (!sessionId.value) return
-    const q = new URLSearchParams({
-      session_id: sessionId.value,
-    })
-    await fetch(`/api/chat/history?${q}`, { 
+    if (sessionId.value) {
+      const q = new URLSearchParams({
+        session_id: sessionId.value,
+      })
+      const res = await fetch(`/api/chat/history?${q}`, {
+        method: 'DELETE',
+        headers: getAuthHeaders()
+      })
+      await ensureAuthorizedResponse(res)
+    }
+    resetSessionState()
+    localStorage.removeItem(sessionStorageKey(userId.value))
+  }
+
+  async function resetChat() {
+    const res = await fetch('/api/chat/reset', {
       method: 'DELETE',
       headers: getAuthHeaders()
     })
-    messages.value = []
-    sessionId.value = null
+    await ensureAuthorizedResponse(res)
+    resetSessionState()
     localStorage.removeItem(sessionStorageKey(userId.value))
   }
 
@@ -186,9 +284,13 @@ export const useChatStore = defineStore('chat', () => {
     sessionId,
     isThinking,
     currentIntent,
+    developerMode,
     sendMessage,
     loadHistory,
     clearHistory,
+    resetChat,
     refreshUser,
+    resetSessionState,
+    toggleDeveloperMode,
   }
 })
