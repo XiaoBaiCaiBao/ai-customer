@@ -1,6 +1,17 @@
-# 本地开发用 —— 只启动基础设施，前后端在本机跑
+# 本地开发用 —— 启动基础设施和独立业务系统，前后端可在本机跑
 # 用法: docker compose -f docker-compose.dev.yml up -d
 services:
+  bou-business:
+    build:
+      context: ./bou-business
+      dockerfile: Dockerfile
+    container_name: bou_business
+    environment:
+      BOU_BUSINESS_HOST: 0.0.0.0
+    ports:
+      - "127.0.0.1:8011:8011"
+    restart: unless-stopped
+
   qdrant:
     image: qdrant/qdrant:v1.13.1
     container_name: ai_customer_qdrant

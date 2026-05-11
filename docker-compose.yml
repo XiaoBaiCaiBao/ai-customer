@@ -20,10 +20,21 @@ services:
       # 覆盖 .env 里的 localhost 地址，指向 Docker 内部服务名
       QDRANT_URL: http://qdrant:6333
       MONGODB_URL: mongodb://mongodb:27017
+      MCP_SERVER_URL: http://bou-business:8011/mcp
       CORS_ORIGINS: "*"
     depends_on:
+      - bou-business
       - qdrant
       - mongodb
+    restart: unless-stopped
+
+  # ── 独立业务系统：REST API + MCP Server ─────────────────────────────────────
+  bou-business:
+    build:
+      context: ./bou-business
+      dockerfile: Dockerfile
+    environment:
+      BOU_BUSINESS_HOST: 0.0.0.0
     restart: unless-stopped
 
   # ── 向量数据库 ───────────────────────────────────────────────────────────────

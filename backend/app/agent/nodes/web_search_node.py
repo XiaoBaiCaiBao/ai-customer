@@ -20,12 +20,24 @@ from app.agent.state import AgentState
 from app.llm import get_llm
 from app.message_utils import build_multimodal_prompt, get_message_text
 
-from app.prompts.web_search import (
-    WEB_SEARCH_DEFAULT_PROMPT as DEFAULT_PROMPT,
-    WEB_SEARCH_EXTRACT_PROMPT as EXTRACT_PROMPT,
-    WEB_SEARCH_FORMAT_ERROR_PROMPT as FORMAT_ERROR_PROMPT,
-    WEB_SEARCH_FORMAT_WEATHER_PROMPT as FORMAT_WEATHER_PROMPT,
-)
+EXTRACT_PROMPT = """从以下用户问题中，提取需要查询的关键信息。
+只返回 JSON，格式：{{"type": "weather", "location": "城市名"}} 或 {{"type": "other", "query": "搜索词"}}
+
+用户问题：{query}"""
+
+FORMAT_WEATHER_PROMPT = """你是 BOU 的 AI 助手，请根据以下天气数据，用友好自然的语气回复用户。
+回复 2-3 句话，包含温度、天气状况、简单建议。
+
+城市: {city}
+天气数据: {data}
+
+用户原始问题: {query}"""
+
+FORMAT_ERROR_PROMPT = """你是 BOU 的 AI 助手。
+用户想查询实时信息，但查询失败了。请友好地告知用户暂时无法获取该信息，并建议替代方案。
+用户问题: {query}"""
+
+DEFAULT_PROMPT = """你是 BOU 的 AI 助手。用户想查询实时信息，请如实回答（如果是天气，说明需要提供城市名）。"""
 
 
 async def _extract_query_info(query: str) -> dict:
@@ -79,7 +91,7 @@ def _parse_weather(data: dict, city: str) -> str:
 
 async def web_search_node(state: AgentState) -> dict:
     latest_message = state["messages"][-1]
-    query = state.get("rewritten_query") or get_message_text(latest_message)
+    query = state.get("rewrite_query") or get_message_text(latest_message)
 
     # ── Step 1: Thought ──
     await adispatch_custom_event(

@@ -1,35 +1,38 @@
-# MCP Server (ai-customer)
+# MCP Client (ai-customer)
 
-## 运行方式
+`ai-customer` 后端是 MCP Host，并在 `app/mcp/client.py` 里使用官方 Python SDK 实现一个很薄的 Streamable HTTP MCP client。
 
-1. 安装依赖：
+MCP Server 已迁移到独立业务系统 `bou-business`，避免把业务接口和 Agent 混在同一个边界里。
 
-```bash
-pip install -r backend/requirements.txt
+## 调用链路
+
+```text
+FastAPI / LangGraph Host
+  -> app.mcp.client.list_tools()
+  -> 将 MCP tools 转成模型供应商 tools 参数
+  -> LLM 返回 tool_calls
+  -> app.mcp.client.call_mcp_tool(...)
+  -> bou-business /mcp
+  -> bou-business REST/service/mock data
 ```
 
-2. 可选配置 `.env`：
+## 后端配置
 
 ```env
-MCP_SERVER_TOKEN=your_token_here
+MCP_SERVER_URL=http://localhost:8011/mcp
+MCP_AUTH_TOKEN=
+MCP_TIMEOUT_SECONDS=8
 ```
 
-3. 启动 MCP Server（stdio）：
+## 当前使用的工具
 
-```bash
-python -m app.mcp.server
-```
+- `get_user_details(user_id)`
+- `get_user_recent_orders(user_id, asset_type?, datetime_range?, limit?)`
+- `get_asset_details(user_id, asset_type, datetime_range?)`
+- `submit_work_order(user_id, issue_type, description, order_id?, priority?)`
 
-## 已暴露工具
+## 边界
 
-- `get_user_recent_orders(user_id, auth_token?)`
-- `check_user_assets(user_id, auth_token?)`
-- `submit_work_order(user_id, issue_type, description, order_id?, auth_token?)`
-
-## 治理策略
-
-- 参数校验：`user_id`、`issue_type`、`description` 在工具层校验。
-- 幂等保障：`submit_work_order` 基于关键字段生成幂等键，重复提交返回同一工单号。
-- 权限控制：若配置 `MCP_SERVER_TOKEN`，调用方必须传 `auth_token`。
-- 审计日志：记录工具名、调用耗时、调用结果状态。
-
+- `mcp_tool` 节点：需要业务工具的意图，使用模型原生 tools/tool_calls 选择工具和参数，再调用 MCP tool。
+- `skills_node`：复杂 SOP，不是 MCP tool；它可以在步骤里调用 MCP tools。
+- `bou-business`：业务系统边界，负责 REST API、mock data、MCP Server。

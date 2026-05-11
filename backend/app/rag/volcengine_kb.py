@@ -125,4 +125,5 @@ async def retrieve_from_volcengine_kb(query: str, top_k: int = 5) -> list[dict]:
         )
 
     hits = ((data.get("data") or {}).get("result_list") or [])[:limit]
-    return [_normalize_hit(hit) for hit in hits if (hit.get("content") or "").strip()]
+    results = [_normalize_hit(hit) for hit in hits if (hit.get("content") or "").strip()]
+    return [result for result in results if result.get("score", 0.0) >= s.RAG_MIN_SCORE]

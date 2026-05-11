@@ -75,7 +75,7 @@ async def retrieve(query: str, top_k: int = 5) -> list[dict]:
                 "score": round(r.score, 4),
             }
             for r in response.points
-            if r.score > 0.4
+            if r.score >= s.RAG_MIN_SCORE
         ]
     except Exception as e:
         print(f"[RAG] 检索失败，降级处理: {e}")

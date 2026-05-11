@@ -4,12 +4,21 @@ from langchain_core.messages import BaseMessage
 
 
 IntentType = Literal[
-    "app_info",        # 产品功能疑问
-    "usage_issue",     # 使用遇到问题
-    "user_voice",      # 吐槽/产品建议/投诉（原 app_advice）
-    "aftersales",      # 售后问题（粗粒度，Planner 内细化为子类型）
-    "chat_respond",    # 闲聊（原 chat）
-    "unknown_respond", # 命中敏感词/未识别（原 unknown）
+    "usage_guide",                  # 使用指南
+    "account_issue_consult",        # 账号问题咨询
+    "feature_play_consult",         # 功能玩法咨询
+    "privacy_permission_consult",   # 隐私权限咨询
+    "activity_consult",             # 线上、线下活动咨询
+    "data_search",                  # 实时数据查询
+    "content_safety_consult",       # 内容安全策略咨询
+    "chat_quality_feedback",        # 聊天质量反馈
+    "pre_sales_consult",            # 售前咨询
+    "after_sales_issue",            # 售后问题
+    "product_suggestion",           # 产品建议
+    "product_complaint",            # 产品吐槽
+    "fault_feedback",               # 故障反馈
+    "chat_respond",                 # 闲聊
+    "unknown_respond",              # 命中敏感词/未识别
 ]
 
 
@@ -21,30 +30,21 @@ class AgentState(TypedDict):
     user_id: str
     session_id: str
 
-    # 查询改写后的结果
-    rewritten_query: str
+    # 查询改写后的结果：后续链路真正处理的单个问题。
+    rewrite_query: str
+    rewrite_analysis: str
+    rewrite_used_history: bool
+    rewrite_used_short_memory: bool
 
     # 意图识别结果
     intent: IntentType
     confidence: float
-
-    # Planner 路由决策（route_hint: rag | mcp_single | executor_react | clarify）
-    route_destination: str
+    route: str
 
     # RAG 检索结果
     rag_results: list[dict]
 
-    # 外部 API 调用结果
-    api_response: str
-
-    # 对话状态追踪 (DST)，存储多轮中提取到的关键槽位
+    # 对话状态追踪，存储多轮中提取到的关键槽位
     dialog_state: dict
-    missing_slots: list[str]
     needs_clarification: bool
     clarify_question: str
-
-    # ReAct 推理步骤（用于 UI 展示思考过程）
-    react_steps: list[dict]
-
-    # Skills 链路执行结果
-    skills_result: dict

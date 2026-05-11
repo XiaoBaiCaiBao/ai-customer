@@ -1,11 +1,6 @@
-"""
-节点3a: RAG 检索 + 生成回答
+"""RAG 处理路径：知识库检索 + 生成回答。"""
 
-适用意图: product_info, usage_issue, event
-通过 adispatch_custom_event 向前端推送检索思考步骤。
-"""
-
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, SystemMessage
 from langchain_core.callbacks.manager import adispatch_custom_event
 from app.agent.state import AgentState
 from app.config import get_settings
@@ -13,25 +8,23 @@ from app.rag.retriever import retrieve
 from app.llm import get_llm
 from app.message_utils import build_multimodal_prompt, get_message_text
 
-from app.prompts.rag import RAG_SYSTEM_PROMPT
+RAG_SYSTEM_PROMPT = """你是 BOU 的 AI 客服助手，友好、专业、简洁。
+
+请根据下方「知识库内容」回答用户的问题。
+- 如果知识库中有明确答案，直接回答，可以适当用 emoji 让回复更友好
+- 如果知识库内容不足，诚实告知「我暂时没有找到相关信息，建议您联系人工客服」
+- 如果知识库内容与当前问题不匹配，不要借用其他主题的内容回答
+- 不要编造不在知识库中的信息
+
+知识库内容：
+{context}"""
 
 
 async def rag_node(state: AgentState) -> dict:
     latest_message = state["messages"][-1]
-    query = state.get("rewritten_query") or get_message_text(latest_message)
+    query = state.get("rewrite_query") or get_message_text(latest_message)
     settings = get_settings()
-
-    # ── Thought ──
-    await adispatch_custom_event(
-        "thinking_step",
-        {
-            "step_type": "thought",
-            "step_num": 1,
-            "content": f"用户在咨询产品相关问题，我需要在知识库中检索相关内容来回答。",
-        },
-    )
-
-    # ── Action ──
+    
     await adispatch_custom_event(
         "thinking_step",
         {
@@ -42,7 +35,6 @@ async def rag_node(state: AgentState) -> dict:
     )
 
     results = await retrieve(query)
-    state_update: dict = {"rag_results": results}
 
     await adispatch_custom_event(
         "rag_meta",
@@ -95,11 +87,24 @@ async def rag_node(state: AgentState) -> dict:
         },
     )
 
-    llm = get_llm(streaming=True)
-    response = await llm.ainvoke([
-        SystemMessage(content=RAG_SYSTEM_PROMPT.format(context=context)),
-        build_multimodal_prompt(query, latest_message),
-    ])
+    if results:
+        llm = get_llm(streaming=True)
+        response = await llm.ainvoke([
+            SystemMessage(content=RAG_SYSTEM_PROMPT.format(context=context)),
+            build_multimodal_prompt(query, latest_message),
+        ])
+        answer = response.content
+    else:
+        answer = "我暂时没有找到相关信息，建议您联系人工客服"
 
-    state_update["messages"] = [AIMessage(content=response.content)]
-    return state_update
+    rag_results = [{**r, "query": query} for r in results]
+    return {
+        "messages": [AIMessage(content=answer)],
+        "intent": state.get("intent", "unknown_respond"),
+        "confidence": state.get("confidence", 0.0),
+        "route": "rag",
+        "rag_results": rag_results,
+        "dialog_state": state.get("dialog_state", {}),
+        "needs_clarification": False,
+        "clarify_question": "",
+    }

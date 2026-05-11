@@ -279,8 +279,6 @@ const quickChips = [
   '聊天时为什么出现红色感叹号',
   '帮我查询北京天气',
   '我充了月卡但体力没到账',
-  '会员权益',
-  '积分问题',
 ]
 
 const hasStreamingMessage = computed(() =>
@@ -288,13 +286,19 @@ const hasStreamingMessage = computed(() =>
 )
 
 const INTENT_THINKING_LABELS = {
-  product_info: '查询知识库中…',
-  usage_issue:  '检索问题解决方案…',
-  complaint:    '记录用户反馈…',
-  aftersales:   '核查订单与资产…',
-  event:        '查询活动信息…',
-  web_search:   '联网查询中…',
-  chat:         '思考回复中…',
+  usage_guide: '查询使用指南中…',
+  account_issue_consult: '查询账号说明中…',
+  feature_play_consult: '查询功能玩法中…',
+  privacy_permission_consult: '查询隐私权限说明中…',
+  activity_consult: '查询活动信息中…',
+  content_safety_consult: '查询安全策略中…',
+  chat_quality_feedback: '记录聊天质量反馈中…',
+  pre_sales_consult: '查询权益与礼包中…',
+  after_sales_issue: '核查订单与资产中…',
+  product_suggestion: '记录产品建议中…',
+  product_complaint: '记录用户反馈中…',
+  fault_feedback: '记录故障反馈中…',
+  chat_respond: '思考回复中…',
 }
 
 const intentThinkingLabel = computed(() => {

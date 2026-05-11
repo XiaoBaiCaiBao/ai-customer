@@ -16,6 +16,7 @@ class Settings(BaseSettings):
 
     # RAG provider
     RAG_PROVIDER: str = "qdrant"  # qdrant | volcengine_kb
+    RAG_MIN_SCORE: float = 0.6
 
     # Qdrant
     QDRANT_URL: str = "http://localhost:6333"
@@ -45,12 +46,14 @@ class Settings(BaseSettings):
     MONGODB_URL: str = "mongodb://localhost:27017"
     MONGODB_DB: str = "ai_customer"
 
-    # 产研通知接口
+    # 产研通知接口（旧 HTTP 直连接口；工具型意图现在优先走 MCP）
     NOTIFY_API_URL: str = ""
     NOTIFY_API_KEY: str = ""
 
-    # MCP Server 鉴权（可选，配置后调用方需传入 auth_token）
-    MCP_SERVER_TOKEN: str = ""
+    # MCP client -> bou-business MCP Server
+    MCP_SERVER_URL: str = "http://localhost:8011/mcp"
+    MCP_AUTH_TOKEN: str = ""
+    MCP_TIMEOUT_SECONDS: float = 8.0
 
     # CORS
     CORS_ORIGINS: str = "http://localhost:5173"

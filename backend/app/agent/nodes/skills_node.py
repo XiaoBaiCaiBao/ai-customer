@@ -12,46 +12,156 @@ Skills 是预写的 SOP（标准作业流程），不是 ReAct：
 """
 
 import json
+from typing import Literal, TypedDict
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.callbacks.manager import adispatch_custom_event
 from app.agent.state import AgentState
 from app.llm import get_llm
 from app.message_utils import get_message_text
-from app.prompts.skills import (
-    SKILL_REGISTRY,
-    AFTERSALES_DEFAULT_SKILL,
-    REPLY_NOT_FOUND_MSG,
-)
-from app.agent.tools import TOOLS_MAP
+from app.mcp.client import MCPClientError, call_mcp_tool
 
 MAX_TASKS = 6  # 单次对话最多执行的 Task 数，防止死循环
 
 
-# ─── 工具调用适配层 ────────────────────────────────────────────────────────────
+class TaskDef(TypedDict, total=False):
+    purpose: str
+    tool_type: Literal["code", "llm", "api", "reply"]
+    tool_name: str
+    prompt_template: str
+    required_slots: list[str]
+    optional_slots: list[str]
+    clarify_msg: str
+    memory_read: list[str]
+    memory_write: str
+    branches: dict[str, str]
 
-async def _call_api(tool_name: str, memory: dict, user_id: str) -> dict:
-    """
-    根据 tool_name 组装参数并调用对应工具。
-    各工具的参数从 memory 中读取，缺省值用 user_id 兜底。
-    """
+
+ASSET_NOT_ARRIVED_SOP: dict = {
+    "skill_id": "asset_recharge_issue",
+    "name": "虚拟资产购买未到账",
+    "description": "处理用户购买回声贝、周卡会员、月卡会员等虚拟资产后未到账的售后问题",
+    "start_task": "T1",
+    "tasks": {
+        "T1": TaskDef(
+            purpose="检查并补全槽位",
+            tool_type="code",
+            required_slots=["assets_type"],
+            optional_slots=["timerange"],
+            clarify_msg="请问您购买的资产是：1 周卡，2 月卡，3 回声贝？回复数字即可",
+            memory_read=["user_id", "user_query", "assets_type", "timerange"],
+            branches={
+                "complete": "T2",
+                "missing": "clarify",
+            },
+        ),
+        "T2": TaskDef(
+            purpose="资产类别映射",
+            tool_type="llm",
+            memory_read=["assets_type"],
+            memory_write="assets_type",
+            prompt_template="""你是一个字段标准化助手。
+用户描述的资产类型是：{assets_type}
+
+请将其映射为以下标准枚举值之一（只输出枚举值，不要任何额外文字）：
+- vip_monthly   （月卡会员）
+- vip_weekly    （周卡会员）
+- coin          （回声贝）
+
+若无法匹配，输出 unknown。""",
+            branches={
+                "ok": "T3",
+                "unknown": "T1",
+            },
+        ),
+        "T3": TaskDef(
+            purpose="订单状态查询",
+            tool_type="api",
+            tool_name="order_search",
+            memory_read=["user_id", "timerange", "assets_type"],
+            memory_write="order_id",
+            branches={
+                "has_unpaid": "T6",
+                "paid_need_confirm": "clarify",
+                "single_paid": "T4",
+                "no_orders": "reply_not_found",
+            },
+        ),
+        "T4": TaskDef(
+            purpose="查询资产流水",
+            tool_type="api",
+            tool_name="asset_details_list",
+            memory_read=["user_id", "order_id"],
+            memory_write="assets_amount",
+            branches={
+                "normal_delivery": "T6",
+                "not_found": "T5",
+            },
+        ),
+        "T5": TaskDef(
+            purpose="提交售后工单",
+            tool_type="api",
+            tool_name="submit_work_order",
+            memory_read=["user_id", "assets_type", "order_id"],
+            branches={
+                "ok": "T6",
+            },
+        ),
+        "T6": TaskDef(
+            purpose="生成回复",
+            tool_type="reply",
+            memory_read=["assets_type", "order_id", "assets_amount"],
+            prompt_template="""你是 BOU 游戏客服，请根据以下信息生成一条给用户的回复。
+要求：专业、有温度、简洁，符合「听劝、陪伴」人设，不超过150字。
+
+用户问题：{user_query}
+当前资产类型：{assets_type}
+关联订单：{order_id}
+资产流水金额/数量：{assets_amount}
+本轮处理摘要：{observation}""",
+        ),
+    },
+}
+
+REPLY_NOT_FOUND_MSG = "不好意思，未查询到近3日您的订单呢，如果超过3日请提供一下大概购买时间或订单号，我再帮您查一下～"
+
+SKILL_REGISTRY: dict[str, dict] = {
+    "asset_recharge_issue": ASSET_NOT_ARRIVED_SOP,
+}
+
+AFTERSALES_DEFAULT_SKILL = "asset_recharge_issue"
+
+
+ISSUE_TYPE_BY_ASSET = {
+    "vip_monthly": "月卡未到账",
+    "vip_weekly": "周卡未到账",
+    "coin": "回声贝未到账",
+    "回声贝": "回声贝未到账",
+    "月卡": "月卡未到账",
+    "周卡": "周卡未到账",
+}
+
+
+# ─── MCP 工具调用适配层 ────────────────────────────────────────────────────────
+
+def _build_tool_call(tool_name: str, memory: dict, user_id: str) -> tuple[str, dict]:
     params: dict = {}
     resolved_tool_name = tool_name
 
     if tool_name == "order_search":
-        # 复用 get_user_recent_orders 作为 order_search
         resolved_tool_name = "get_user_recent_orders"
         params = {"user_id": user_id}
+        if memory.get("assets_type") in {"vip_monthly", "vip_weekly", "coin"}:
+            params["asset_type"] = memory["assets_type"]
 
     elif tool_name == "asset_details_list":
-        # 复用 check_user_assets（后续可替换为真实接口）
-        resolved_tool_name = "check_user_assets"
+        resolved_tool_name = "get_user_details"
         params = {"user_id": user_id}
 
     elif tool_name == "submit_work_order":
         resolved_tool_name = "submit_work_order"
         params = {
             "user_id": user_id,
-            "issue_type": memory.get("assets_type", "虚拟资产未到账"),
+            "issue_type": ISSUE_TYPE_BY_ASSET.get(memory.get("assets_type"), "虚拟资产未到账"),
             "description": memory.get("user_query", "用户反馈购买后未到账"),
             "order_id": memory.get("order_id", ""),
         }
@@ -59,14 +169,18 @@ async def _call_api(tool_name: str, memory: dict, user_id: str) -> dict:
     else:
         params = {"user_id": user_id}
 
-    fn = TOOLS_MAP.get(resolved_tool_name)
-    if not fn:
-        return {"error": f"未知工具: {tool_name}"}
+    return resolved_tool_name, params
 
+
+async def _call_api(tool_name: str, memory: dict, user_id: str) -> dict:
+    """
+    根据 tool_name 组装参数并调用对应工具。
+    各工具的参数从 memory 中读取，缺省值用 user_id 兜底。
+    """
+    resolved_tool_name, params = _build_tool_call(tool_name, memory, user_id)
     try:
-        raw = await fn.ainvoke(params)
-        return json.loads(raw) if isinstance(raw, str) else raw
-    except Exception as e:
+        return await call_mcp_tool(resolved_tool_name, params)
+    except MCPClientError as e:
         return {"error": str(e)}
 
 
@@ -74,12 +188,19 @@ async def _call_api(tool_name: str, memory: dict, user_id: str) -> dict:
 
 def _branch_order_search(api_result: dict) -> tuple[str, str]:
     """返回 (branch_key, order_id_or_empty)"""
+    if api_result.get("error"):
+        return "no_orders", ""
+
     orders = api_result.get("orders", [])
     if not orders:
         return "no_orders", ""
 
-    unpaid = [o for o in orders if o.get("status") not in ("Success", "Paid")]
-    paid = [o for o in orders if o.get("status") in ("Success", "Paid")]
+    def is_paid(order: dict) -> bool:
+        status = order.get("status") or order.get("payment_status")
+        return str(status).lower() in {"success", "paid"}
+
+    unpaid = [o for o in orders if not is_paid(o)]
+    paid = [o for o in orders if is_paid(o)]
 
     if unpaid:
         return "has_unpaid", ""
@@ -92,20 +213,39 @@ def _branch_asset_details(api_result: dict) -> tuple[str, str]:
     """返回 (branch_key, assets_amount_or_empty)"""
     if api_result.get("error"):
         return "not_found", ""
-    # delivery_callback_failed 表示权益未下发
-    if api_result.get("diagnosis") == "delivery_callback_failed":
+
+    diagnosis = api_result.get("diagnosis")
+    if isinstance(diagnosis, dict) and diagnosis.get("status") == "abnormal":
         return "not_found", ""
+
+    # delivery_callback_failed 表示权益未下发
+    if diagnosis == "delivery_callback_failed":
+        return "not_found", ""
+
+    assets = api_result.get("assets") or []
+    abnormal_assets = [
+        asset for asset in assets
+        if asset.get("status") in {"abnormal", "not_delivered"}
+    ]
+    if abnormal_assets:
+        return "not_found", ""
+
     # 有 stamina_current 说明正常发放
     stamina = api_result.get("stamina_current")
     if stamina is not None and stamina > 0:
         return "normal_delivery", str(stamina)
+
+    active_asset = next((asset for asset in assets if asset.get("balance")), None)
+    if active_asset:
+        return "normal_delivery", str(active_asset.get("balance"))
+
     return "not_found", ""
 
 
 # ─── 主节点 ─────────────────────────────────────────────────────────────────
 
 async def skills_node(state: AgentState) -> dict:
-    query = state.get("rewritten_query") or get_message_text(state["messages"][-1])
+    query = state.get("rewrite_query") or get_message_text(state["messages"][-1])
     user_id = state.get("user_id", "demo_user_001")
     memory = state.get("dialog_state", {}).copy()
     memory.setdefault("user_query", query)
@@ -114,7 +254,17 @@ async def skills_node(state: AgentState) -> dict:
     skill_id = memory.get("_skill_id", AFTERSALES_DEFAULT_SKILL)
     sop = SKILL_REGISTRY.get(skill_id)
     if not sop:
-        return {"messages": [AIMessage(content="暂不支持该类型的售后处理，请联系人工客服。")]}
+        final_reply = "暂不支持该类型的售后处理，请联系人工客服。"
+        return {
+            "messages": [AIMessage(content=final_reply)],
+            "intent": state.get("intent", "after_sales_issue"),
+            "confidence": state.get("confidence", 0.0),
+            "route": "skills",
+            "dialog_state": memory,
+            "rag_results": [],
+            "needs_clarification": False,
+            "clarify_question": "",
+        }
 
     # 从上次中断的 Task 继续，或从起始 Task 开始
     current_task_id = memory.pop("_current_task", sop["start_task"])
@@ -198,7 +348,9 @@ async def skills_node(state: AgentState) -> dict:
         # ════════════════════════════════════════════════════════════
         elif tool_type == "api":
             tool_name = task.get("tool_name", "")
+            mcp_tool_name, mcp_arguments = _build_tool_call(tool_name, memory, user_id)
             api_result = await _call_api(tool_name, memory, user_id)
+            branch_key = ""
 
             # 根据工具名选择对应的分支判断逻辑
             if tool_name == "order_search":
@@ -228,7 +380,7 @@ async def skills_node(state: AgentState) -> dict:
                 next_task_id = branches.get(branch_key)
 
             elif tool_name == "submit_work_order":
-                ticket_id = api_result.get("ticket_id", "")
+                ticket_id = api_result.get("ticket_id") or (api_result.get("work_order") or {}).get("ticket_id", "")
                 memory["ticket_id"] = ticket_id
                 obs = f"工单提交：{ticket_id}"
                 next_task_id = branches.get("ok", "T6")
@@ -239,6 +391,21 @@ async def skills_node(state: AgentState) -> dict:
 
             observations.append(f"[{current_task_id}] {obs}")
 
+            await adispatch_custom_event(
+                "tool_call",
+                {
+                    "node": "skills",
+                    "task_id": current_task_id,
+                    "task_purpose": task.get("purpose", ""),
+                    "tool_name": mcp_tool_name,
+                    "logical_tool_name": tool_name,
+                    "arguments": mcp_arguments,
+                    "result": api_result,
+                    "success": not bool(api_result.get("error")),
+                    "branch": branch_key,
+                    "observation": obs,
+                },
+            )
             await adispatch_custom_event(
                 "thinking_step",
                 {
@@ -282,6 +449,11 @@ async def skills_node(state: AgentState) -> dict:
 
     return {
         "dialog_state": memory,
-        "skills_result": {"observations": observations, "reply": final_reply},
         "messages": [AIMessage(content=final_reply)],
+        "intent": state.get("intent", "after_sales_issue"),
+        "confidence": state.get("confidence", 0.0),
+        "route": "skills",
+        "rag_results": [],
+        "needs_clarification": "_current_task" in memory,
+        "clarify_question": final_reply if "_current_task" in memory else "",
     }

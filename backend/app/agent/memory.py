@@ -3,7 +3,15 @@ from datetime import datetime, timezone
 from langchain_core.messages import HumanMessage
 from app.llm import get_llm
 from app.db.mongo import _client
-from app.prompts.stm_compress import STM_COMPRESS_PROMPT
+
+STM_COMPRESS_PROMPT = """你是一个专业的对话总结助手。
+请将以下客服对话历史总结成一段简短的摘要（不超过100字）。
+摘要需要保留用户的主要诉求、已经提供的关键信息（如槽位）以及客服给出的核心答复或进度。
+
+历史对话：
+{history}
+
+总结摘要："""
 
 
 async def compress_history(session_id: str, user_id: str) -> None:

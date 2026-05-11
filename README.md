@@ -1,6 +1,6 @@
 # AI Customer Service — BOU 智能客服
 
-基于 LangGraph + RAG 的企业级 AI 客服系统，支持意图识别、对话状态追踪 (DST)、长短期记忆管理、RAG 知识库检索、多步推理 (ReAct)、外部 API 集成及流式回复。
+基于 LangGraph + RAG 的企业级 AI 客服系统，支持意图识别、长短期记忆管理、RAG 知识库检索、MCP 工具调用、复杂 SOP 执行及流式回复。
 
 ## 技术栈
 
@@ -12,6 +12,7 @@
 | LLM | OpenAI 兼容接口（可切换任意模型） |
 | 向量库 | Qdrant（外部独立服务，可选） |
 | 数据存储 | MongoDB（持久化对话历史、长期记忆） |
+| 业务系统 | bou-business（独立 Node 服务，REST API + MCP Server） |
 
 ## Agent 核心架构与流程
 
@@ -22,23 +23,23 @@ graph TD
   User[User Query] --> Init[加载历史对话与记忆]
   Init --> Rewrite[查询改写 Rewrite\n补全代词与省略信息]
   Rewrite --> Classify[意图分类 Classify\n输出意图与置信度]
-  Classify --> DST[对话状态追踪 DST\n更新槽位, 判断是否缺信息]
-  DST --> Router{Intent Router}
+  Classify --> Router{Intent Router}
   
   Router -->|缺关键槽位| Clarify[澄清节点 Clarify\n反问用户收集槽位]
-  Router -->|aftersales 售后问题| ReAct[ReAct 节点\n查单/查账/提工单]
+  Router -->|after_sales_issue 售后复杂问题| Skills[Skills SOP\n多步查单/查资产/提工单]
   Router -->|product_info / usage_issue| RAG[RAG 节点\n检索知识库回答]
-  Router -->|complaint 吐槽建议| API[API 节点\n安抚并通知产研]
-  Router -->|web_search 实时信息| WebSearch[Web Search 节点\n请求外部接口]
+  Router -->|需要业务工具的意图| MCP[MCP Tool 节点\n选择并调用业务工具]
   Router -->|chat / unknown| Chat[闲聊节点 Chat]
   
-  ReAct <--> Tools["业务工具集\n(查订单, 查资产, 提交工单等)"]
+  MCP --> Client[MCP Client\nStreamable HTTP]
+  Skills --> Client
+  Client --> Server[bou-business MCP Server]
+  Server --> BizAPI["bou-business REST/API\n(查订单, 查资产, 提交工单, 记录反馈)"]
   
   Clarify --> Out[流式输出 Response Stream]
-  ReAct --> Out
+  Skills --> Out
   RAG --> Out
-  API --> Out
-  WebSearch --> Out
+  MCP --> Out
   Chat --> Out
   
   Out --> STM[更新短期记忆 STM]
@@ -52,20 +53,23 @@ graph TD
    - **Rewrite (查询改写)**: 结合最近的历史记录，将用户的简写或代词（如“那我有什么权益”）补全为独立的查询语句（如“月卡VIP用户有哪些权益？”），提高后续意图识别和检索的准确率。
    - **Classify (意图分类)**: 使用 LLM 结构化输出（Structured Output），将用户问题分为售后、吐槽、产品咨询、闲聊、实时信息等，并给出置信度。
 
-2. **对话状态追踪 (Dialog State Tracking, DST)**
-   - 针对任务型多轮对话（如售后、吐槽），自动从用户回复中提取关键槽位（如 `issue_type`, `topic`）。
-   - 如果发现关键槽位缺失，自动路由至 `Clarify` 节点向用户发起反问，收集完整信息后再进行下一步操作，避免盲目调用工具。
+2. **工具型意图与 MCP**
+   - 需要业务工具的意图路由到 `mcp_tool` 节点。
+   - `mcp_tool` 节点先用 selector 选择 MCP tool 和参数，再用 executor 通过 `app.mcp.client` 调用独立业务系统 `bou-business` 暴露的 MCP tools。
+   - selector 可以使用 LLM 理解用户问题和工具 schema；executor 不使用 LLM，只负责协议调用、结果解析和状态更新。
+   - Agent 后端是 MCP Host + MCP Client；`bou-business` 是 MCP Server + 业务 API 边界。
 
-3. **ReAct 范式 (Reasoning and Acting)**
-   - 售后场景采用 ReAct 架构，Agent 可以在内部进行多步 `Thought -> Action -> Observation` 的循环。
-   - **工具箱 (Tools)**：Agent 可以调用诸如 `get_user_recent_orders`（查订单）、`check_user_assets`（查资产）、`submit_work_order`（提交售后工单）等工具，彻底查清问题后再给用户最终答复。
+3. **Skills / SOP**
+   - `skills_node` 用于复杂业务意图，不是 MCP tool，也不是接口。
+   - Skill 是沉淀下来的 SOP：检查槽位 → 标准化字段 → 查订单 → 查资产 → 提工单 → 生成回复。
+   - Skill 执行过程中可以调用 MCP tools，但 skill 本身仍属于 Agent 内部业务流程。
 
 4. **长短期记忆管理 (Memory Management)**
    - **短期记忆 (STM)**：使用 MongoDB 存储会话级消息记录。当对话轮数超过阈值（如 6 轮）时，后台触发**异步压缩任务**，调用 LLM 将旧消息总结成简短摘要，并拼接在上下文头部，有效控制 Token 消耗并保留上下文。
-   - **长期记忆 (LTM)**：预留异步更新脚手架，在特定节点或对话结束时，将 DST 收集到的用户偏好或关键 Fact 提取出来，准备存入向量数据库或用户画像系统，实现跨 Session 的记忆。
+   - **长期记忆 (LTM)**：预留异步更新脚手架，在特定节点或对话结束时，将 `dialog_state` 收集到的用户偏好或关键 Fact 提取出来，准备存入向量数据库或用户画像系统，实现跨 Session 的记忆。
 
-5. **提示词工程解耦 (Prompt Management)**
-   - 各节点提示词按模块拆在 `app/prompts/` 下（如 `classify.py`、`react.py` 等），`__init__.py` 聚合导出；与业务代码解耦，便于单独改版式。
+5. **提示词随节点管理 (Prompt Management)**
+   - 各节点使用的提示词直接在对应节点文件中声明为变量并引用，便于阅读节点逻辑时同时看到完整 prompt。
 
 ## 快速启动
 
@@ -98,10 +102,10 @@ npm run dev
 ### 3. 基础设施（本地开发）
 
 ```bash
-docker compose -f docker-compose.dev.yml up -d   # Qdrant (6333) + MongoDB (27017)
+docker compose -f docker-compose.dev.yml up -d   # bou-business (8011) + Qdrant (6333) + MongoDB (27017)
 ```
 
-`.env` 中配置 `MONGODB_URL=mongodb://localhost:27017`（与 dev compose 一致）。  
+`.env` 中配置 `MONGODB_URL=mongodb://localhost:27017`、`MCP_SERVER_URL=http://localhost:8011/mcp`（与 dev compose 一致）。  
 知识库由外部服务写入 Qdrant，本项目只负责检索。
 
 ---
@@ -149,6 +153,7 @@ EMBEDDING_BASE_URL=https://ark.cn-beijing.volces.com/api/v3/embeddings/multimoda
 # 以下由 docker-compose.yml 自动覆盖，保持默认即可
 QDRANT_URL=http://qdrant:6333
 MONGODB_URL=mongodb://mongodb:27017
+MCP_SERVER_URL=http://bou-business:8011/mcp
 ```
 
 如果你想直接调用火山引擎托管知识库，而不是本地 Qdrant，可在 `backend/.env` 中额外配置：
@@ -256,33 +261,26 @@ backend/
 │   │   └── nodes/
 │   │       ├── rewrite.py    # 查询改写节点
 │   │       ├── classify.py   # 意图分类节点
-│   │       ├── dst_node.py   # 对话状态追踪节点 (提取槽位)
 │   │       ├── rag_node.py   # RAG 检索节点
-│   │       ├── api_node.py   # 吐槽/售后等 API 通知节点
+│   │       ├── mcp_tool_node.py # MCP 工具选择、执行和回复节点
+│   │       ├── skills_node.py # 复杂 SOP 执行节点
 │   │       ├── chat_node.py  # 闲聊 / 澄清节点
-│   │       ├── react_node.py # ReAct 推理节点 (处理售后查账/提工单)
-│   │       └── web_search_node.py # 联网查询节点 (如查天气)
+│   │       └── web_search_node.py # 预留联网查询节点
+│   ├── mcp/client.py         # MCP Client (Streamable HTTP JSON-RPC)
 │   ├── api/chat.py           # FastAPI 路由（SSE, 接收 LangGraph stream）
-│   ├── prompts/              # 每节点一个提示词文件，__init__.py 聚合导出
-│   │   ├── classify.py
-│   │   ├── rewrite.py
-│   │   ├── rag.py
-│   │   ├── dst.py
-│   │   ├── chat.py
-│   │   ├── api.py
-│   │   ├── web_search.py
-│   │   ├── react.py
-│   │   ├── stm_compress.py   # 短期记忆压缩（memory 模块使用）
-│   │   └── __init__.py
 │   ├── rag/retriever.py      # Qdrant 检索
 │   ├── db/mongo.py           # MongoDB 读写 (对话记录持久化)
 │   ├── llm.py                # LLM 工厂
 │   └── config.py             # 全局配置
+bou-business/
+├── src/server.js             # 独立业务系统：REST API + MCP Server
+├── src/business.js           # 业务能力和幂等逻辑
+└── src/data.js               # 测试业务数据
 frontend/
 ├── src/
 │   ├── views/ChatView.vue    # 主页面
 │   ├── components/MessageBubble.vue
 │   └── stores/chat.js        # 状态管理 + SSE 对接
-docker-compose.yml            # 生产全栈（nginx + backend + qdrant + mongodb）
-docker-compose.dev.yml        # 本地开发（仅 qdrant + mongodb）
+docker-compose.yml            # 生产全栈（nginx + backend + bou-business + qdrant + mongodb）
+docker-compose.dev.yml        # 本地开发（bou-business + qdrant + mongodb）
 ```
