@@ -1,14 +1,20 @@
 # Python
 backend/venv/
+admin/backend/venv/
 backend/__pycache__/
 backend/**/__pycache__/
+admin/backend/__pycache__/
+admin/backend/**/__pycache__/
 backend/.env
+admin/backend/.env
 *.pyc
 *.pyo
 
 # Node
 frontend/node_modules/
 frontend/dist/
+admin/frontend/node_modules/
+admin/frontend/dist/
 bou-business/node_modules/
 
 # IDE
