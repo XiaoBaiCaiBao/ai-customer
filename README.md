@@ -73,7 +73,33 @@ graph TD
 
 ## 快速启动
 
-### 1. 后端
+### 本地开发：一键启动全套 Docker 环境
+
+推荐本地开发统一使用 Docker，不要再混合手动启动多个前后端进程：
+
+```bash
+make dev-up
+make dev-check
+```
+
+访问地址：
+
+- 客服前端：http://127.0.0.1:5173/chat
+- 客服后端：http://127.0.0.1:8000/health
+- 管理后台前端：http://127.0.0.1:5174/admin
+- 管理后台后端：http://127.0.0.1:8001/health
+- 业务 MCP：http://127.0.0.1:8011/health
+
+常用命令：
+
+```bash
+make dev-ps       # 查看服务状态
+make dev-logs     # 查看所有服务日志
+make dev-restart  # 重启所有服务
+make dev-down     # 停止全套服务
+```
+
+### 1. 后端（可选：只在不使用 Docker 时手动启动）
 
 **Python 需要 3.11 或以上版本。**
 
@@ -99,13 +125,15 @@ npm run dev
 
 打开 http://localhost:5173
 
-### 3. 基础设施（本地开发）
+### 3. 基础设施（旧方式，不推荐）
 
 ```bash
 docker compose -f docker-compose.dev.yml up -d   # bou-business (8011) + Qdrant (6333) + MongoDB (27017)
 ```
 
-`.env` 中配置 `MONGODB_URL=mongodb://localhost:27017`、`MCP_SERVER_URL=http://localhost:8011/mcp`（与 dev compose 一致）。  
+现在 `docker-compose.dev.yml` 会启动完整本地开发环境。旧的“只起基础设施、前后端手动跑”方式容易造成端口和进程混乱，不建议继续使用。
+
+`.env` 中配置 `MONGODB_URL=mongodb://localhost:27017`、`MCP_SERVER_URL=http://localhost:8011/mcp`（与手动方式一致）。  
 知识库由外部服务写入 Qdrant，本项目只负责检索。
 
 ---

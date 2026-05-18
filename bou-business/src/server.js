@@ -17,7 +17,7 @@ const HOST = process.env.BOU_BUSINESS_HOST || "127.0.0.1";
 const PORT = Number(process.env.BOU_BUSINESS_PORT || 8011);
 const AUTH_TOKEN = process.env.BOU_BUSINESS_TOKEN || "";
 
-const assetTypeSchema = z.enum(["vip_weekly", "vip_monthly", "coin"]);
+const assetTypeSchema = z.enum(["vip_weekly", "vip_monthly", "coin", "star_energy"]);
 const datetimeRangeSchema = z
   .object({
     start: z.string(),
@@ -62,7 +62,7 @@ function createBusinessMcpServer() {
   });
 
   server.registerTool(
-    "get_user_details",
+    "user_account_search",
     {
       description: "查询用户资产概览，包括月卡VIP状态、周卡VIP状态、回声贝余额、星能余额等",
       inputSchema: z.object({
@@ -73,7 +73,7 @@ function createBusinessMcpServer() {
   );
 
   server.registerTool(
-    "get_user_recent_orders",
+    "user_order_search",
     {
       description: "获取用户订单列表，可能是周卡VIP、月卡VIP、回声贝购买订单",
       inputSchema: z.object({
@@ -94,7 +94,7 @@ function createBusinessMcpServer() {
   );
 
   server.registerTool(
-    "get_asset_details",
+    "assets_flow_search",
     {
       description: "查询用户某类型资产的明细流水",
       inputSchema: z.object({
@@ -112,14 +112,19 @@ function createBusinessMcpServer() {
   );
 
   server.registerTool(
-    "submit_work_order",
+    "word_order_submission",
     {
-      description: "提交工单",
+      description: "提交工单，可用于 bug 工单、功能反馈工单、内容回复质量问题",
       inputSchema: z.object({
         user_id: z.string(),
-        issue_type: z.string(),
+        issue_type: z.string().default("聊天质量反馈"),
+        intent: z.string().optional(),
+        work_order_type: z.enum(["bug", "feature_feedback", "content_quality"]).default("content_quality"),
+        category: z.string().optional(),
         description: z.string(),
         order_id: z.string().optional(),
+        occurrence_time: z.string().optional(),
+        attachments: z.array(z.string()).optional(),
         priority: z.enum(["low", "normal", "high"]).default("normal")
       })
     },
@@ -165,8 +170,12 @@ app.get("/api/users/:user_id/assets/:asset_type/details", (req, res) => {
   }));
 });
 
-app.post("/api/work-orders", (req, res) => {
-  sendRest(res, 201, submitWorkOrder(req.body || {}));
+app.post("/api/work-orders", async (req, res, next) => {
+  try {
+    sendRest(res, 201, await submitWorkOrder(req.body || {}));
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.post("/mcp", async (req, res) => {

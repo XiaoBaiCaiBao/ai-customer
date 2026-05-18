@@ -31,10 +31,10 @@ POST /mcp
 
 Tools:
 
-- `get_user_recent_orders`
-- `get_user_details`
-- `get_asset_details`
-- `submit_work_order`
+- `user_account_search`
+- `user_order_search`
+- `assets_flow_search`
+- `word_order_submission`
 
 Optional auth:
 

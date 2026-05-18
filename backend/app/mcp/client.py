@@ -75,15 +75,25 @@ class StreamableHttpMCPClient:
     tools through the official Python SDK.
     """
 
-    def __init__(self, url: str, auth_token: str = "", timeout_seconds: float = 8.0) -> None:
+    def __init__(
+        self,
+        url: str,
+        auth_token: str = "",
+        host_header: str = "",
+        timeout_seconds: float = 8.0,
+    ) -> None:
         self.url = url
         self.auth_token = auth_token
+        self.host_header = host_header
         self.timeout_seconds = timeout_seconds
 
     def _headers(self) -> dict[str, str]:
-        if not self.auth_token:
-            return {}
-        return {"Authorization": f"Bearer {self.auth_token}"}
+        headers: dict[str, str] = {}
+        if self.auth_token:
+            headers["Authorization"] = f"Bearer {self.auth_token}"
+        if self.host_header:
+            headers["Host"] = self.host_header
+        return headers
 
     @asynccontextmanager
     async def _session(self):
@@ -136,6 +146,7 @@ def get_mcp_client() -> StreamableHttpMCPClient:
         _client = StreamableHttpMCPClient(
             url=settings.MCP_SERVER_URL,
             auth_token=settings.MCP_AUTH_TOKEN,
+            host_header=settings.MCP_HOST_HEADER,
             timeout_seconds=settings.MCP_TIMEOUT_SECONDS,
         )
     return _client

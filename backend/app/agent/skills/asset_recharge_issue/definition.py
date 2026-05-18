@@ -68,7 +68,7 @@ SKILL: SkillDef = {
         "T5": TaskDef(
             purpose="提交售后工单",
             tool_type="api",
-            tool_name="submit_work_order",
+            tool_name="word_order_submission",
             memory_read=["user_id", "assets_type", "order_id"],
             branches={
                 "ok": "T6",

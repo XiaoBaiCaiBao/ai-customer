@@ -26,10 +26,10 @@ MCP_TIMEOUT_SECONDS=8
 
 ## 当前使用的工具
 
-- `get_user_details(user_id)`
-- `get_user_recent_orders(user_id, asset_type?, datetime_range?, limit?)`
-- `get_asset_details(user_id, asset_type, datetime_range?)`
-- `submit_work_order(user_id, issue_type, description, order_id?, priority?)`
+- `user_account_search(user_id)`：用户账户查询。
+- `user_order_search(user_id, asset_type?, datetime_range?, limit?)`：用户订单查询。
+- `assets_flow_search(user_id, asset_type, datetime_range?)`：虚拟资产流水查询。
+- `word_order_submission(user_id, issue_type, description, work_order_type?, category?, order_id?, occurrence_time?, attachments?, priority?)`：工单提交。
 
 ## 边界
 

@@ -6,7 +6,8 @@ from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ADMIN_BACKEND_DIR = Path(__file__).resolve().parents[2]
-REPO_ROOT = Path(__file__).resolve().parents[4]
+_PATH_PARENTS = Path(__file__).resolve().parents
+REPO_ROOT = _PATH_PARENTS[4] if len(_PATH_PARENTS) > 4 else ADMIN_BACKEND_DIR
 
 
 class Settings(BaseSettings):

@@ -1,18 +1,8 @@
-import crypto from "node:crypto";
-import { users, workOrders } from "./data.js";
+import { users } from "./data.js";
 
 const USER_ID_PATTERN = /^[a-zA-Z0-9_-]{3,64}$/;
-const ASSET_TYPES = new Set(["vip_weekly", "vip_monthly", "coin"]);
-
-const WORK_ORDER_ISSUE_TYPES = new Set([
-  "月卡未到账",
-  "周卡未到账",
-  "回声贝未到账",
-  "虚拟资产未到账",
-  "体力异常",
-  "订单异常",
-  "聊天质量反馈"
-]);
+const ASSET_TYPES = new Set(["vip_weekly", "vip_monthly", "coin", "star_energy"]);
+const ADMIN_TICKET_API_URL = process.env.ADMIN_TICKET_API_URL || "http://127.0.0.1:8001/api/tickets/from-agent";
 
 export class BusinessError extends Error {
   constructor(statusCode, code, message, details = {}) {
@@ -24,19 +14,72 @@ export class BusinessError extends Error {
   }
 }
 
-function nowIso() {
-  return new Date().toISOString();
-}
-
-function hash(input) {
-  return crypto.createHash("sha256").update(input).digest("hex");
-}
-
 function validateUserId(userId) {
   if (!userId || !USER_ID_PATTERN.test(userId)) {
     throw new BusinessError(400, "INVALID_ARGUMENT", "user_id must be 3-64 chars: letters, numbers, _ or -", {
       field: "user_id"
     });
+  }
+}
+
+function inferTicketIntent(workOrderType, issueType) {
+  if (workOrderType === "content_quality" || issueType === "聊天质量反馈") {
+    return "chat_quality_feedback";
+  }
+  if (workOrderType === "feature_feedback") {
+    return "product_suggestion";
+  }
+  if (workOrderType === "bug") {
+    return "fault_feedback";
+  }
+  return "after_sales_issue";
+}
+
+function inferTicketTitle(workOrderType, issueType, category) {
+  if (category) return category;
+  if (workOrderType === "content_quality") return "内容回复质量问题";
+  if (workOrderType === "feature_feedback") return "功能反馈工单";
+  if (workOrderType === "bug") return "bug提工单";
+  return issueType || "AI转人工工单";
+}
+
+function inferAssignee(workOrderType, issueType) {
+  if (workOrderType === "content_quality" || issueType === "聊天质量反馈") return "算法";
+  if (workOrderType === "feature_feedback") return "产品";
+  if (workOrderType === "bug") return "研发";
+  return "运营";
+}
+
+function normalizeAdminPriority(priority) {
+  if (priority === "normal") return "medium";
+  return priority;
+}
+
+async function postAdminTicket(payload) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
+  try {
+    const response = await fetch(ADMIN_TICKET_API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new BusinessError(response.status, "ADMIN_TICKET_CREATE_FAILED", data.detail || data.message || "Admin ticket API failed", {
+        admin_ticket_api_url: ADMIN_TICKET_API_URL
+      });
+    }
+    return data;
+  } catch (error) {
+    if (error instanceof BusinessError) throw error;
+    throw new BusinessError(502, "ADMIN_TICKET_UNAVAILABLE", "Cannot create ticket in admin backend", {
+      admin_ticket_api_url: ADMIN_TICKET_API_URL,
+      reason: error?.message || String(error)
+    });
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -153,19 +196,23 @@ export function getAssetDetails(userId, assetType, options = {}) {
   });
 }
 
-export function submitWorkOrder(payload) {
+export async function submitWorkOrder(payload) {
   const userId = payload.user_id;
-  const issueType = payload.issue_type;
+  const issueType = String(payload.issue_type || "").trim();
   const description = String(payload.description || "").trim();
   const orderId = String(payload.order_id || "").trim();
   const priority = payload.priority || "normal";
+  const workOrderType = payload.work_order_type || null;
+  const category = payload.category || null;
+  const occurrenceTime = payload.occurrence_time || null;
+  const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
 
-  getUser(userId);
+  validateUserId(userId);
 
-  if (!WORK_ORDER_ISSUE_TYPES.has(issueType)) {
+  if (!issueType) {
     throw new BusinessError(400, "INVALID_ARGUMENT", "Unsupported issue_type", {
       field: "issue_type",
-      allowed: Array.from(WORK_ORDER_ISSUE_TYPES)
+      reason: "issue_type is required"
     });
   }
   if (description.length < 6) {
@@ -179,25 +226,47 @@ export function submitWorkOrder(payload) {
     });
   }
 
-  const key = hash(`${userId}|${issueType}|${orderId}|${description.slice(0, 120)}`);
-  const existing = workOrders.get(key);
-  if (existing) {
-    return success({ work_order: { ...existing, idempotent: true } });
-  }
-
-  const ticketId = `WO_${String(workOrders.size + 1).padStart(6, "0")}`;
+  const intent = payload.intent || inferTicketIntent(workOrderType, issueType);
+  const title = inferTicketTitle(workOrderType, issueType, category);
+  const adminTicketPayload = {
+    user_id: userId,
+    title,
+    intent,
+    priority: normalizeAdminPriority(priority),
+    assignee: payload.assignee || inferAssignee(workOrderType, issueType),
+    summary: description,
+    ai_trace: {
+      source: "mcp.word_order_submission",
+      issue_type: issueType,
+      work_order_type: workOrderType,
+      category,
+      order_id: orderId || null,
+      occurrence_time: occurrenceTime,
+      attachments,
+      raw_payload: payload
+    },
+    tags: Array.from(new Set([
+      "MCP",
+      ...(workOrderType === "content_quality" ? ["Skills", "BadCase", "内容回复质量问题"] : []),
+      ...(category ? [category] : [])
+    ]))
+  };
+  const adminTicket = await postAdminTicket(adminTicketPayload);
+  const ticketId = adminTicket.ticket_id;
   const workOrder = {
     ticket_id: ticketId,
     user_id: userId,
+    intent,
     issue_type: issueType,
+    work_order_type: workOrderType,
+    category,
     description,
     order_id: orderId || null,
-    priority,
-    status: "submitted",
-    created_at: nowIso(),
-    idempotent: false
+    occurrence_time: occurrenceTime,
+    attachments,
+    priority: normalizeAdminPriority(priority),
+    status: "submitted"
   };
-  workOrders.set(key, workOrder);
   return success({ work_order: workOrder });
 }
 

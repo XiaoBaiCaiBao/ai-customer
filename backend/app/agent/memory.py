@@ -1,4 +1,3 @@
-import asyncio
 from datetime import datetime, timezone
 from langchain_core.messages import HumanMessage
 from app.llm import get_llm
@@ -59,20 +58,3 @@ async def compress_history(session_id: str, user_id: str) -> None:
         print(f"[Memory] 压缩历史记录失败: {e}")
     finally:
         client.close()
-
-
-async def trigger_ltm_update(user_id: str, session_id: str, new_dialog_state: dict) -> None:
-    """
-    【长期记忆 LTM 异步更新脚手架】
-    当对话发生关键信息更新时，或在对话结束时调用此方法。
-    可以在这里将 dialog_state 或对话摘要抽取成 Fact，写入向量数据库或用户画像库。
-    """
-    print(f"[LTM] 触发长期记忆更新 - 用户: {user_id}, Session: {session_id}")
-    # 示例逻辑：
-    # 1. 检查 new_dialog_state 中是否包含用户的偏好信息（如手机型号、充值习惯等）
-    # 2. 调用 LLM 提取 Fact
-    # 3. 存入 LTM (Milvus/Qdrant 或 MongoDB 用户集合)
-    
-    # 模拟异步延迟
-    await asyncio.sleep(0.1)
-    pass

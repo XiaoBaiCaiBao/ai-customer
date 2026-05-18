@@ -18,7 +18,7 @@ from langchain_core.messages import HumanMessage, AIMessage
 
 from app.agent.graph import agent_graph
 from app.agent.state import AgentState
-from app.agent.memory import compress_history, trigger_ltm_update
+from app.agent.memory import compress_history
 from app.db.mongo import get_history, append_messages, clear_history, clear_all_history
 from app.message_utils import make_user_message
 import asyncio
@@ -53,13 +53,14 @@ async def chat_stream(req: ChatRequest, current_user: dict = Depends(get_current
         "session_id": session_id,
         "rewrite_query": "",
         "rewrite_analysis": "",
-        "rewrite_used_history": False,
-        "rewrite_used_short_memory": False,
         "intent": "unknown_respond",
         "confidence": 0.0,
-        "route": "",
+        "slots": {},
+        "task": {"action": "none"},
+        "route": "chat_respond",
         "needs_clarification": False,
         "clarify_question": "",
+        "active_task": dialog_state.get("active_task"),
         "dialog_state": dialog_state,
         "rag_results": [],
     }
@@ -78,7 +79,6 @@ async def chat_stream(req: ChatRequest, current_user: dict = Depends(get_current
             "skills",
             "chat_respond",
             "clarify",
-            "unrecognized",
         }
 
         # 收集最后一个状态的 dialog_state
@@ -145,26 +145,13 @@ async def chat_stream(req: ChatRequest, current_user: dict = Depends(get_current
                     if isinstance(output, dict):
                         rewrite_query = output.get("rewrite_query", "")
                         rewrite_analysis = output.get("rewrite_analysis", "")
-                        rewrite_used_history = output.get("rewrite_used_history", False)
-                        rewrite_used_short_memory = output.get("rewrite_used_short_memory", False)
-                        needs_clarification = output.get("needs_clarification", False)
-                        clarify_question = output.get("clarify_question", "")
                     else:
                         rewrite_query = ""
                         rewrite_analysis = ""
-                        rewrite_used_history = False
-                        rewrite_used_short_memory = False
-                        needs_clarification = False
-                        clarify_question = ""
-                    rewrite_summary = (
-                        f"需要澄清：{clarify_question}"
-                        if needs_clarification
-                        else rewrite_query
-                    )
-                    if rewrite_summary:
-                        yield f"data: {json.dumps({'type': 'rewrite', 'input_query': req.message, 'rewrite_query': rewrite_query, 'rewrite_analysis': rewrite_analysis, 'rewrite_used_history': rewrite_used_history, 'rewrite_used_short_memory': rewrite_used_short_memory, 'needs_clarification': needs_clarification, 'clarify_question': clarify_question})}\n\n"
+                    if rewrite_query:
+                        yield f"data: {json.dumps({'type': 'rewrite', 'input_query': req.message, 'rewrite_query': rewrite_query, 'rewrite_analysis': rewrite_analysis})}\n\n"
 
-                # ── 思考步骤（RAG / web_search / react 节点发出的自定义事件）──
+                # ── 思考步骤（RAG / MCP / skills 节点发出的自定义事件）──
                 elif event_type == "on_custom_event" and event.get("name") == "thinking_step":
                     step_data = event["data"]
                     yield f"data: {json.dumps({'type': 'thinking_step', **step_data})}\n\n"
@@ -173,7 +160,6 @@ async def chat_stream(req: ChatRequest, current_user: dict = Depends(get_current
                     debug_data = event["data"]
                     if (
                         not intent_sent
-                        and debug_data.get("status") == "classified"
                         and debug_data.get("intent")
                     ):
                         intent_sent = True
@@ -216,7 +202,14 @@ async def chat_stream(req: ChatRequest, current_user: dict = Depends(get_current
                                 yield f"data: {json.dumps({'type': 'token', 'content': last_msg.content})}\n\n"
         except Exception as exc:
             logger.exception("chat stream failed: session_id=%s user_id=%s", session_id, user_id)
-            fallback = "抱歉，这次处理时后端出现异常，我已经停止本轮执行了。请稍后再试一次。"
+            error_text = str(exc)
+            if "429" in error_text or "SetLimitExceeded" in error_text or "TooManyRequests" in error_text:
+                fallback = (
+                    "抱歉，这次处理失败是因为当前模型服务触发了额度限制，暂时无法继续响应。"
+                    "请稍后再试，或让管理员调整模型额度/关闭安全体验限制。"
+                )
+            else:
+                fallback = "抱歉，这次处理时后端出现异常，我已经停止本轮执行了。请稍后再试一次。"
             collected_tokens.append(fallback)
             yield f"data: {json.dumps({'type': 'error', 'message': str(exc)[:300]})}\n\n"
             yield f"data: {json.dumps({'type': 'token', 'content': fallback})}\n\n"
@@ -237,10 +230,6 @@ async def chat_stream(req: ChatRequest, current_user: dict = Depends(get_current
             # 后台异步执行短期记忆压缩
             asyncio.create_task(compress_history(session_id, user_id))
             
-            # 后台异步更新长期记忆（脚手架）
-            if final_dialog_state:
-                asyncio.create_task(trigger_ltm_update(user_id, session_id, final_dialog_state))
-                
         yield f"data: {json.dumps({'type': 'done', 'session_id': session_id})}\n\n"
 
     return StreamingResponse(

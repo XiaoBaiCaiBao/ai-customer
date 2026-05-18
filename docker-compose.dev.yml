@@ -1,6 +1,90 @@
-# 本地开发用 —— 启动基础设施和独立业务系统，前后端可在本机跑
-# 用法: docker compose -f docker-compose.dev.yml up -d
+# 本地开发一键启动全套服务
+# 用法:
+#   docker compose -f docker-compose.dev.yml up -d --build
+# 访问:
+#   客服前端       http://127.0.0.1:5173/chat
+#   客服后端       http://127.0.0.1:8000/health
+#   管理后台前端   http://127.0.0.1:5174/admin
+#   管理后台后端   http://127.0.0.1:8001/health
+#   业务 MCP       http://127.0.0.1:8011/health
+
 services:
+  frontend:
+    image: node:20-alpine
+    container_name: ai_customer_frontend
+    working_dir: /app
+    environment:
+      API_PROXY_TARGET: http://backend:8000
+    command: sh -c "npm ci --registry https://registry.npmmirror.com && npm run dev"
+    ports:
+      - "127.0.0.1:5173:5173"
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ai_customer_backend
+    env_file: ./backend/.env
+    environment:
+      QDRANT_URL: http://qdrant:6333
+      MONGODB_URL: mongodb://mongodb:27017
+      MCP_SERVER_URL: http://bou-business:8011/mcp
+      MCP_HOST_HEADER: 127.0.0.1:8011
+      CORS_ORIGINS: http://127.0.0.1:5173,http://localhost:5173
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - bou-business
+      - mongodb
+      - qdrant
+    restart: unless-stopped
+
+  admin-frontend:
+    image: node:20-alpine
+    container_name: ai_customer_admin_frontend
+    working_dir: /app
+    environment:
+      API_PROXY_TARGET: http://admin-backend:8001
+    command: sh -c "npm ci --registry https://registry.npmmirror.com && npm run dev"
+    ports:
+      - "127.0.0.1:5174:5174"
+    volumes:
+      - ./admin/frontend:/app
+      - admin_frontend_node_modules:/app/node_modules
+    depends_on:
+      - admin-backend
+    restart: unless-stopped
+
+  admin-backend:
+    build:
+      context: ./admin/backend
+      dockerfile: Dockerfile
+    container_name: ai_customer_admin_backend
+    env_file: ./backend/.env
+    environment:
+      ADMIN_MONGODB_URL: mongodb://mongodb:27017
+      ADMIN_MONGODB_DB: ai_customer_admin
+      ADMIN_CORS_ORIGINS: http://127.0.0.1:5174,http://localhost:5174
+      QDRANT_URL: http://qdrant:6333
+    command: uvicorn main:app --host 0.0.0.0 --port 8001 --reload
+    ports:
+      - "127.0.0.1:8001:8001"
+    volumes:
+      - ./admin/backend:/app
+    depends_on:
+      - mongodb
+      - qdrant
+    restart: unless-stopped
+
   bou-business:
     build:
       context: ./bou-business
@@ -8,16 +92,19 @@ services:
     container_name: bou_business
     environment:
       BOU_BUSINESS_HOST: 0.0.0.0
+      ADMIN_TICKET_API_URL: http://admin-backend:8001/api/tickets/from-agent
     ports:
       - "127.0.0.1:8011:8011"
+    depends_on:
+      - admin-backend
     restart: unless-stopped
 
   qdrant:
     image: qdrant/qdrant:v1.13.1
     container_name: ai_customer_qdrant
     ports:
-      - "6333:6333"
-      - "6334:6334"
+      - "127.0.0.1:6333:6333"
+      - "127.0.0.1:6334:6334"
     volumes:
       - qdrant_data:/qdrant/storage
     restart: unless-stopped
@@ -26,11 +113,13 @@ services:
     image: mongo:7.0
     container_name: ai_customer_mongo
     ports:
-      - "27017:27017"
+      - "127.0.0.1:27017:27017"
     volumes:
       - mongo_data:/data/db
     restart: unless-stopped
 
 volumes:
+  frontend_node_modules:
+  admin_frontend_node_modules:
   qdrant_data:
   mongo_data:

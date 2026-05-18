@@ -17,14 +17,16 @@ from app.message_utils import build_multimodal_prompt, get_message_text
 
 MCP_TOOL_SYSTEM_PROMPT = """你是 BOU 客服 Agent 的业务工具编排助手。
 
-你可以使用提供的工具查询 BOU 用户订单、资产、资产明细，或提交售后工单。
+你可以使用提供的工具查询 BOU 用户账号、订单、资产流水，或提交工单。
 
 规则：
 - 优先基于工具结果回答，不要编造订单、余额、资产状态或工单号。
 - 当前用户 ID 是 {user_id}，调用工具时必须使用这个 user_id。
-- 用户问余额、会员状态、到账情况时，优先查询用户详情或订单。
-- 用户问流水、明细、消费记录时，调用资产明细工具，并把资产类型映射为：
-  月卡/vip_monthly，周卡/vip_weekly，回声贝/coin。
+- 用户问账号、个人信息、会员状态时，优先使用 user_account_search。
+- 用户问订单、购买记录、到账情况时，优先使用 user_order_search。
+- 用户问流水、明细、消费记录时，调用 assets_flow_search，并把资产类型映射为：
+  月卡/vip_monthly，周卡/vip_weekly，回声贝/coin，星能/star_energy。
+- 用户要反馈 bug、功能建议或内容回复质量问题时，使用 word_order_submission。
 - 如果用户要提交工单，但缺少问题类型或问题描述，先追问，不要随意提交。
 - 回复要简洁、友好，使用客服口吻。"""
 
@@ -116,6 +118,8 @@ def _prepare_arguments(tool_call: dict[str, Any], tools: list[dict[str, Any]], s
         arguments["asset_type"] = "vip_weekly"
     elif asset_type in {"daibi", "代币", "回声贝", "echo"}:
         arguments["asset_type"] = "coin"
+    elif asset_type in {"星能", "star", "energy"}:
+        arguments["asset_type"] = "star_energy"
 
     return arguments
 

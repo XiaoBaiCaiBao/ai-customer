@@ -51,8 +51,9 @@ class Settings(BaseSettings):
     NOTIFY_API_KEY: str = ""
 
     # MCP client -> bou-business MCP Server
-    MCP_SERVER_URL: str = "http://localhost:8011/mcp"
+    MCP_SERVER_URL: str = "http://127.0.0.1:8011/mcp"
     MCP_AUTH_TOKEN: str = ""
+    MCP_HOST_HEADER: str = ""
     MCP_TIMEOUT_SECONDS: float = 8.0
 
     # CORS
