@@ -16,7 +16,7 @@ class Settings(BaseSettings):
 
     # RAG provider
     RAG_PROVIDER: str = "qdrant"  # qdrant | volcengine_kb
-    RAG_MIN_SCORE: float = 0.6
+    RAG_MIN_SCORE: float = 0.3
 
     # Qdrant
     QDRANT_URL: str = "http://localhost:6333"

@@ -5,11 +5,13 @@ import hashlib
 import math
 import re
 import uuid
+from io import BytesIO
 from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
+from pypdf import PdfReader
 
 from app.core.db import mongo_client
 from app.services.chunking import (
@@ -19,6 +21,11 @@ from app.services.chunking import (
     build_chunks,
     normalize_fetched_doc,
     token_estimate,
+)
+from app.services.vector_store import (
+    delete_document_from_vector_store,
+    publish_document_to_vector_store,
+    search_vector_store,
 )
 
 router = APIRouter(prefix="/kb", tags=["knowledge-base"])
@@ -69,6 +76,33 @@ def now() -> datetime:
 
 def content_hash(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def extract_pdf_text(raw: bytes, filename: str) -> tuple[str, str, int]:
+    try:
+        reader = PdfReader(BytesIO(raw))
+        if reader.is_encrypted:
+            try:
+                reader.decrypt("")
+            except Exception as exc:
+                raise HTTPException(status_code=400, detail="PDF 已加密，当前无法解析，请先解除加密后上传") from exc
+
+        page_texts = []
+        for index, page in enumerate(reader.pages, start=1):
+            text = (page.extract_text() or "").strip()
+            if text:
+                page_texts.append(f"## 第 {index} 页\n\n{text}")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="PDF 解析失败，请确认文件未损坏") from exc
+
+    content = "\n\n".join(page_texts).strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="PDF 未解析出文本，可能是扫描件；当前 MVP 请先转成可复制文本或 OCR 后上传")
+
+    title = filename.rsplit(".", 1)[0]
+    return title, f"# {title}\n\n{content}", len(reader.pages)
 
 
 async def fetch_feishu_content(url: str) -> tuple[str, str]:
@@ -163,29 +197,44 @@ async def fetch_feishu_doc(req: FetchFeishuRequest):
 async def upload_knowledge_file(file: UploadFile = File(...)):
     filename = file.filename or "未命名文件"
     suffix = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-    supported = {"md", "markdown", "txt", "json", "csv", "tsv", "log"}
+    supported = {"md", "markdown", "txt", "json", "csv", "tsv", "log", "pdf"}
     if suffix not in supported:
-        raise HTTPException(status_code=400, detail="当前 MVP 仅支持 md、txt、json、csv、tsv、log 文本文件")
+        raise HTTPException(status_code=400, detail="当前 MVP 仅支持 md、txt、json、csv、tsv、log、pdf 文件")
 
     raw = await file.read()
-    if len(raw) > 2 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="文件过大，当前限制 2MB")
+    max_size = 10 * 1024 * 1024 if suffix == "pdf" else 2 * 1024 * 1024
+    if len(raw) > max_size:
+        size_mb = max_size // 1024 // 1024
+        raise HTTPException(status_code=413, detail=f"文件过大，当前限制 {size_mb}MB")
 
-    try:
-        content = raw.decode("utf-8")
-    except UnicodeDecodeError:
-        try:
-            content = raw.decode("gb18030")
-        except UnicodeDecodeError as exc:
-            raise HTTPException(status_code=400, detail="文件编码暂不支持，请转为 UTF-8 后上传") from exc
-
-    if suffix in {"csv", "tsv"}:
-        title = filename.rsplit(".", 1)[0]
-        content = f"# {title}\n\n{content.strip()}"
+    page_count = None
+    if suffix == "pdf":
+        title, content, page_count = extract_pdf_text(raw, filename)
     else:
-        title, content = normalize_fetched_doc(content)
-        if title == "未命名文档":
+        try:
+            content = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            try:
+                content = raw.decode("gb18030")
+            except UnicodeDecodeError as exc:
+                raise HTTPException(status_code=400, detail="文件编码暂不支持，请转为 UTF-8 后上传") from exc
+
+        if suffix in {"csv", "tsv"}:
             title = filename.rsplit(".", 1)[0]
+            content = f"# {title}\n\n{content.strip()}"
+        else:
+            title, content = normalize_fetched_doc(content)
+            if title == "未命名文档":
+                title = filename.rsplit(".", 1)[0]
+
+    stats = {
+        "filename": filename,
+        "char_count": len(content),
+        "token_estimate": token_estimate(content),
+        "content_hash": content_hash(content),
+    }
+    if page_count is not None:
+        stats["page_count"] = page_count
 
     return {
         "title": title,
@@ -197,12 +246,7 @@ async def upload_knowledge_file(file: UploadFile = File(...)):
             owner="产品运营",
             tags=["本地上传", suffix],
         ).model_dump(),
-        "stats": {
-            "filename": filename,
-            "char_count": len(content),
-            "token_estimate": token_estimate(content),
-            "content_hash": content_hash(content),
-        },
+        "stats": stats,
     }
 
 
@@ -311,14 +355,40 @@ async def update_document_status(doc_id: str, req: UpdateDocumentStatusRequest):
             raise HTTPException(status_code=404, detail="文档不存在")
 
         timestamp = now()
+        vector_result = None
         update = {
             "metadata.status": req.status,
             "updated_at": timestamp,
         }
         if req.status == "published":
+            vector_doc = {
+                **doc,
+                "metadata": {
+                    **(doc.get("metadata") or {}),
+                    "status": "published",
+                },
+            }
+            try:
+                vector_result = await publish_document_to_vector_store(vector_doc)
+            except Exception as exc:
+                raise HTTPException(status_code=502, detail=f"发布到 Qdrant 失败：{exc}") from exc
             update["published_at"] = timestamp
+            update["vector_status"] = "published"
+            update["vector_sync_at"] = timestamp
+            update["vector_result"] = vector_result
+        else:
+            try:
+                await delete_document_from_vector_store(doc_id)
+                update["vector_status"] = "deleted"
+                update["vector_sync_at"] = timestamp
+            except Exception as exc:
+                raise HTTPException(status_code=502, detail=f"从 Qdrant 删除文档失败：{exc}") from exc
         result = await client[db_name].knowledge_documents.update_one({"doc_id": doc_id}, {"$set": update})
-        return {"updated": bool(result.modified_count), "status": req.status}
+        return {
+            "updated": bool(result.modified_count),
+            "status": req.status,
+            "vector_result": vector_result,
+        }
     finally:
         client.close()
 
@@ -383,27 +453,39 @@ async def sync_document_now(doc_id: str):
         strategy = ChunkStrategy(**(doc.get("chunk_strategy") or {}))
         chunks = build_chunks(title, content, metadata, strategy)
 
+        updated_doc = {
+            "title": title,
+            "content": content,
+            "content_hash": new_hash,
+            "metadata": metadata.model_dump(),
+            "chunks": [chunk.model_dump() for chunk in chunks],
+            "chunk_count": len(chunks),
+            "last_sync_at": timestamp,
+            "last_sync_status": "changed_auto_published" if auto_publish else "changed_waiting_review",
+            "updated_at": timestamp,
+            **({"published_at": timestamp} if auto_publish else {}),
+        }
+        vector_result = None
+        if auto_publish:
+            try:
+                vector_result = await publish_document_to_vector_store({**doc, **updated_doc})
+                updated_doc["vector_status"] = "published"
+                updated_doc["vector_sync_at"] = timestamp
+                updated_doc["vector_result"] = vector_result
+            except Exception as exc:
+                raise HTTPException(status_code=502, detail=f"自动发布到 Qdrant 失败：{exc}") from exc
+
         await collection.update_one(
             {"doc_id": doc_id},
             {
-                "$set": {
-                    "title": title,
-                    "content": content,
-                    "content_hash": new_hash,
-                    "metadata": metadata.model_dump(),
-                    "chunks": [chunk.model_dump() for chunk in chunks],
-                    "chunk_count": len(chunks),
-                    "last_sync_at": timestamp,
-                    "last_sync_status": "changed_auto_published" if auto_publish else "changed_waiting_review",
-                    "updated_at": timestamp,
-                    **({"published_at": timestamp} if auto_publish else {}),
-                }
+                "$set": updated_doc
             },
         )
         return {
             "changed": True,
             "status": "changed_auto_published" if auto_publish else "changed_waiting_review",
             "chunk_count": len(chunks),
+            "vector_result": vector_result,
             "message": "已拉取新版本并自动发布" if auto_publish else "已拉取新版本，进入待审核",
         }
     finally:
@@ -418,6 +500,27 @@ async def recall_test(req: RecallTestRequest):
 
     client, db_name = mongo_client()
     try:
+        if req.status_filter in {"published", "all"}:
+            try:
+                vector_results = await search_vector_store(query, req.top_k, req.status_filter, req.category)
+                return {
+                    "query": query,
+                    "results": vector_results,
+                    "summary": {
+                        "candidate_count": len(vector_results),
+                        "returned_count": len(vector_results),
+                        "status_filter": req.status_filter,
+                        "category": req.category,
+                        "provider": "qdrant",
+                    },
+                }
+            except Exception as exc:
+                vector_error = str(exc)
+            else:
+                vector_error = ""
+        else:
+            vector_error = ""
+
         filters = {}
         if req.status_filter != "all":
             filters["metadata.status"] = req.status_filter
@@ -469,6 +572,8 @@ async def recall_test(req: RecallTestRequest):
                 "returned_count": len(top_results),
                 "status_filter": req.status_filter,
                 "category": req.category,
+                "provider": "local_keyword",
+                "fallback_reason": vector_error,
             },
         }
     finally:

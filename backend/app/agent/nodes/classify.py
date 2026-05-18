@@ -17,6 +17,7 @@ from langchain_core.callbacks.manager import adispatch_custom_event
 from pydantic import BaseModel, Field
 from typing import get_args
 from app.agent.json_output import ainvoke_json
+from app.agent.prompts.classify import get_classify_prompt
 from app.agent.state import AgentState, IntentType
 from app.llm import get_llm
 from app.message_utils import build_multimodal_prompt, get_message_text
@@ -278,7 +279,7 @@ async def classify_query(query: str, state: AgentState) -> IntentResult:
     }
 
     llm = get_llm()
-    prompt = CLASSIFY_PROMPT.format(query=query, memory_state=memory_state)
+    prompt = get_classify_prompt(CLASSIFY_PROMPT).format(query=query, memory_state=memory_state)
     raw_result = await ainvoke_json(llm, [
         build_multimodal_prompt(prompt, latest_message)
     ], RawIntentResult)
@@ -366,7 +367,6 @@ RAG_INTENTS = {
 }
 
 MCP_TOOL_INTENTS = {
-    "chat_quality_feedback",
     "product_suggestion",
     "product_complaint",
     "fault_feedback",
@@ -383,6 +383,6 @@ def route_intent(intent: str, confidence: float, clarify_question: str | None = 
         return "rag"
     if intent in MCP_TOOL_INTENTS:
         return "mcp_tool"
-    if intent == "after_sales_issue":
+    if intent in {"after_sales_issue", "chat_quality_feedback"}:
         return "skills"
     return "chat_respond"

@@ -9,11 +9,13 @@ from pydantic import BaseModel, Field
 
 from app.api.kb import score_chunk
 from app.core.db import mongo_client
+from app.evaluations.runners import build_authoring_todo_result
 
 router = APIRouter(prefix="/evaluations", tags=["evaluations"])
 
 CaseStatus = Literal["active", "disabled"]
-EvaluationType = Literal["rag_recall", "end_to_end"]
+EvaluationType = Literal["rewrite", "intent", "rag_recall", "rag_answer", "mcp_tool", "skills", "end_to_end"]
+RouteType = Literal["RAG", "MCP", "Skills", "工单", "产品反馈", "其他"]
 
 
 class EvaluationCaseCreate(BaseModel):
@@ -23,6 +25,8 @@ class EvaluationCaseCreate(BaseModel):
     expected_doc_id: str = ""
     expected_chunk_ids: list[str] = Field(default_factory=list)
     evaluation_type: EvaluationType = "rag_recall"
+    route_type: RouteType = "RAG"
+    expected_payload: dict = Field(default_factory=dict)
     tags: list[str] = Field(default_factory=list)
     status: CaseStatus = "active"
 
@@ -34,6 +38,8 @@ class EvaluationCaseUpdate(BaseModel):
     expected_doc_id: str | None = None
     expected_chunk_ids: list[str] | None = None
     evaluation_type: EvaluationType | None = None
+    route_type: RouteType | None = None
+    expected_payload: dict | None = None
     tags: list[str] | None = None
     status: CaseStatus | None = None
 
@@ -59,10 +65,17 @@ async def ensure_seed_cases(collection) -> None:
                 "case_id": "EVAL_1001",
                 "question": "聊天里出现红色感叹号是怎么回事？",
                 "expected_answer": "红色感叹号通常表示消息发送失败、网络异常或内容触发安全策略，需要引导用户重试或反馈。",
-                "expected_intent": "usage_issue",
+                "expected_intent": "content_safety_consult",
                 "expected_doc_id": "",
                 "expected_chunk_ids": [],
                 "evaluation_type": "rag_recall",
+                "route_type": "RAG",
+                "expected_payload": {
+                    "expected_documents": ["FAQ-内容安全策略", "星能返还规则"],
+                    "expected_answer_points": ["安全策略拦截", "星能不消耗或返还", "继续聊天即可"],
+                    "expected_keywords": ["红色感叹号", "敏感策略", "星能返还"],
+                    "expected_chunk_snippets": ["男主回复超出敏感策略程度则消息无法返回"],
+                },
                 "tags": ["高频问题", "红色感叹号"],
                 "status": "active",
                 "created_at": timestamp,
@@ -72,10 +85,16 @@ async def ensure_seed_cases(collection) -> None:
                 "case_id": "EVAL_1002",
                 "question": "月卡 VIP 有哪些权益？",
                 "expected_answer": "应召回会员权益或订阅规则相关知识。",
-                "expected_intent": "product_info",
+                "expected_intent": "pre_sales_consult",
                 "expected_doc_id": "",
                 "expected_chunk_ids": [],
                 "evaluation_type": "rag_recall",
+                "route_type": "RAG",
+                "expected_payload": {
+                    "expected_documents": ["会员权益说明", "星能规则"],
+                    "expected_answer_points": ["会员权益", "赠送星能", "生效时间"],
+                    "expected_keywords": ["月卡", "会员", "星能"],
+                },
                 "tags": ["会员权益"],
                 "status": "active",
                 "created_at": timestamp,
@@ -133,6 +152,10 @@ async def recall_candidates(db, query: str, top_k: int, status_filter: str, cate
 def judge_case(case: dict, hits: list[dict]) -> dict:
     expected_doc_id = case.get("expected_doc_id") or ""
     expected_chunk_ids = set(case.get("expected_chunk_ids") or [])
+    expected_payload = case.get("expected_payload") or {}
+    expected_documents = set(expected_payload.get("expected_documents") or [])
+    expected_keywords = set(expected_payload.get("expected_keywords") or [])
+    expected_snippets = expected_payload.get("expected_chunk_snippets") or []
     hit_rank = None
     hit_reason = "未配置标准文档/chunk，按是否有召回结果判定为辅助评测"
 
@@ -147,6 +170,17 @@ def judge_case(case: dict, hits: list[dict]) -> dict:
             if hit.get("doc_id") == expected_doc_id:
                 hit_rank = index
                 hit_reason = "命中标准文档"
+                break
+    elif expected_documents or expected_keywords or expected_snippets:
+        for index, hit in enumerate(hits, start=1):
+            title = hit.get("document_title") or ""
+            content = hit.get("content") or ""
+            doc_hit = any(doc in title for doc in expected_documents)
+            keyword_hit = expected_keywords and all(keyword in content for keyword in expected_keywords)
+            snippet_hit = any(snippet and snippet in content for snippet in expected_snippets)
+            if doc_hit or keyword_hit or snippet_hit:
+                hit_rank = index
+                hit_reason = "命中期望文档/关键词/片段"
                 break
     elif hits:
         hit_rank = 1
@@ -231,6 +265,10 @@ async def run_evaluation(req: RunEvaluationRequest):
 
         results = []
         for case in cases:
+            if case.get("evaluation_type") != "rag_recall":
+                results.append(build_authoring_todo_result(case))
+                continue
+
             hits = await recall_candidates(
                 db=db,
                 query=case.get("question", ""),
@@ -261,6 +299,7 @@ async def run_evaluation(req: RunEvaluationRequest):
             "case_count": total,
             "passed_count": passed_count,
             "badcase_count": total - passed_count,
+            "needs_implementation_count": sum(1 for item in results if item.get("needs_implementation")),
             "recall_at_k": round(passed_count / total, 4) if total else 0,
             "mrr": round(sum(item["mrr"] for item in results) / total, 4) if total else 0,
             "avg_top_score": round(sum(item["top_score"] for item in results) / total, 4) if total else 0,

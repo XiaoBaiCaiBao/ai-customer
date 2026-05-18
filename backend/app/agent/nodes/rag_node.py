@@ -3,6 +3,7 @@
 from langchain_core.messages import AIMessage, SystemMessage
 from langchain_core.callbacks.manager import adispatch_custom_event
 from app.agent.state import AgentState
+from app.agent.prompts.rag import get_rag_system_prompt
 from app.config import get_settings
 from app.rag.retriever import retrieve
 from app.llm import get_llm
@@ -90,7 +91,7 @@ async def rag_node(state: AgentState) -> dict:
     if results:
         llm = get_llm(streaming=True)
         response = await llm.ainvoke([
-            SystemMessage(content=RAG_SYSTEM_PROMPT.format(context=context)),
+            SystemMessage(content=get_rag_system_prompt(RAG_SYSTEM_PROMPT).format(context=context)),
             build_multimodal_prompt(query, latest_message),
         ])
         answer = response.content

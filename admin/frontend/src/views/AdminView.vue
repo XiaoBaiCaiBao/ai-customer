@@ -40,7 +40,7 @@
             <div class="panel-header">
               <div>
                 <h3>知识文档导入</h3>
-                <p class="muted">支持飞书链接、本地文本文件和手动粘贴，统一进入元数据与分块流程。</p>
+                <p class="muted">支持飞书链接、本地文本/PDF 文件和手动粘贴，统一进入元数据与分块流程。</p>
               </div>
               <div class="header-actions">
                 <button class="btn" :disabled="loading.upload" @click="triggerFileUpload">
@@ -53,7 +53,7 @@
             </div>
 
             <div class="panel-body stack">
-              <input ref="fileInputRef" type="file" accept=".md,.markdown,.txt,.json,.csv,.tsv,.log" style="display: none" @change="handleFileUpload" />
+              <input ref="fileInputRef" type="file" accept=".md,.markdown,.txt,.json,.csv,.tsv,.log,.pdf,application/pdf" style="display: none" @change="handleFileUpload" />
 
               <label class="field">
                 <span>飞书文档链接</span>
@@ -294,6 +294,77 @@
         </section>
       </section>
 
+      <section v-if="activeTab === 'tools'" class="page stack">
+        <div class="tool-grid">
+          <section class="panel">
+            <div class="panel-header">
+              <div>
+                <h3>新增 / 更新工具</h3>
+                <p class="muted">MCP 评测用例只引用 tool_id，避免 PRD、代码、表格三边各写一份。</p>
+              </div>
+            </div>
+            <div class="panel-body stack">
+              <div class="grid-form">
+                <label class="field">
+                  <span>tool_id</span>
+                  <input v-model="toolForm.tool_id" class="input" placeholder="get_user_spending_summary" />
+                </label>
+                <label class="field">
+                  <span>工具名称</span>
+                  <input v-model="toolForm.name" class="input" placeholder="查询用户消费汇总" />
+                </label>
+              </div>
+              <label class="field">
+                <span>业务说明</span>
+                <textarea v-model="toolForm.description" class="textarea compact-textarea" />
+              </label>
+              <label class="field">
+                <span>适用意图</span>
+                <input v-model="toolIntentInput" class="input" placeholder="用逗号分隔，如 账单查询,售后 / 到账异常" />
+              </label>
+              <div class="grid-form">
+                <label class="field">
+                  <span>入参 Schema JSON</span>
+                  <textarea v-model="toolInputSchemaText" class="textarea json-textarea" />
+                </label>
+                <label class="field">
+                  <span>Mock 返回 JSON</span>
+                  <textarea v-model="toolMockResponseText" class="textarea json-textarea" />
+                </label>
+              </div>
+              <label class="field">
+                <span>失败策略</span>
+                <input v-model="toolForm.failure_strategy" class="input" />
+              </label>
+              <button class="btn primary" :disabled="!toolForm.tool_id || !toolForm.name" @click="saveTool">保存工具</button>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <h3>工具列表</h3>
+              <button class="btn" @click="loadTools">刷新</button>
+            </div>
+            <div class="tool-list">
+              <article v-for="tool in tools" :key="tool.tool_id" class="tool-card">
+                <div class="tool-card-head">
+                  <div>
+                    <strong>{{ tool.name }}</strong>
+                    <p>{{ tool.tool_id }}</p>
+                  </div>
+                  <StatusPill :status="tool.status" />
+                </div>
+                <p class="muted">{{ tool.description }}</p>
+                <div class="hit-debug">适用意图：{{ tool.applicable_intents?.join('、') || '-' }}</div>
+                <pre class="code">{{ JSON.stringify(tool.input_schema, null, 2) }}</pre>
+                <button class="mini-btn" @click="fillToolForm(tool)">编辑</button>
+              </article>
+              <div v-if="!tools.length" class="empty">暂无工具。</div>
+            </div>
+          </section>
+        </div>
+      </section>
+
       <section v-if="activeTab === 'eval'" class="page stack">
         <div class="eval-grid">
           <section class="panel">
@@ -311,24 +382,100 @@
                   <input v-model="evalCaseForm.question" class="input" placeholder="例如：聊天里出现红色感叹号是怎么回事？" />
                 </label>
                 <label class="field">
+                  <span>承接链路</span>
+                  <select v-model="evalCaseForm.route_type" class="select">
+                    <option value="RAG">RAG</option>
+                    <option value="MCP">MCP</option>
+                    <option value="Skills">Skills</option>
+                    <option value="工单">工单</option>
+                    <option value="产品反馈">产品反馈</option>
+                  </select>
+                </label>
+              </div>
+              <div class="grid-form">
+                <label class="field">
                   <span>期望意图</span>
                   <input v-model="evalCaseForm.expected_intent" class="input" placeholder="usage_issue / product_info" />
                 </label>
-              </div>
-              <label class="field">
-                <span>标准答案 / 期望口径</span>
-                <textarea v-model="evalCaseForm.expected_answer" class="textarea compact-textarea" placeholder="用于人工评测或后续 LLM-as-Judge。" />
-              </label>
-              <div class="grid-form">
                 <label class="field">
-                  <span>期望文档 ID</span>
-                  <input v-model="evalCaseForm.expected_doc_id" class="input" placeholder="可选，不填则只做辅助召回判断" />
-                </label>
-                <label class="field">
-                  <span>期望 Chunk IDs</span>
-                  <input v-model="expectedChunkInput" class="input" placeholder="可选，用逗号分隔" />
+                  <span>评测类型</span>
+                  <select v-model="evalCaseForm.evaluation_type" class="select">
+                    <option value="rag_recall">RAG 召回</option>
+                    <option value="rag_answer">RAG 答案</option>
+                    <option value="mcp_tool">MCP 工具</option>
+                    <option value="skills">Skills SOP</option>
+                    <option value="end_to_end">端到端</option>
+                  </select>
                 </label>
               </div>
+
+              <div v-if="evalCaseForm.route_type === 'RAG'" class="route-config">
+                <h4>RAG 期望配置</h4>
+                <label class="field">
+                  <span>期望文档（可多个）</span>
+                  <input v-model="ragExpectedDocumentsInput" class="input" placeholder="用逗号分隔，如 FAQ-内容安全策略,星能返还规则" />
+                </label>
+                <label class="field">
+                  <span>期望答案要点</span>
+                  <textarea v-model="ragAnswerPointsInput" class="textarea compact-textarea" placeholder="一行一个要点，例如：&#10;安全策略拦截&#10;星能不消耗或返还" />
+                </label>
+                <div class="grid-form">
+                  <label class="field">
+                    <span>期望关键词</span>
+                    <input v-model="ragExpectedKeywordsInput" class="input" placeholder="红色感叹号,敏感策略,星能返还" />
+                  </label>
+                  <label class="field">
+                    <span>期望片段</span>
+                    <input v-model="ragExpectedSnippetsInput" class="input" placeholder="可填关键原文片段，不依赖不稳定 chunk_id" />
+                  </label>
+                </div>
+              </div>
+
+              <div v-if="evalCaseForm.route_type === 'MCP'" class="route-config">
+                <h4>MCP 期望配置</h4>
+                <div class="grid-form">
+                  <label class="field">
+                    <span>期望工具</span>
+                    <select v-model="mcpExpectedToolId" class="select">
+                      <option value="">请选择工具</option>
+                      <option v-for="tool in tools" :key="tool.tool_id" :value="tool.tool_id">{{ tool.name }} / {{ tool.tool_id }}</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>必填槽位</span>
+                    <input v-model="mcpRequiredSlotsInput" class="input" placeholder="user_id,start_time,end_time" />
+                  </label>
+                </div>
+                <div class="grid-form">
+                  <label class="field">
+                    <span>期望入参 JSON</span>
+                    <textarea v-model="mcpExpectedArgsText" class="textarea json-textarea" />
+                  </label>
+                  <label class="field">
+                    <span>Mock 返回 JSON</span>
+                    <textarea v-model="mcpMockResponseText" class="textarea json-textarea" />
+                  </label>
+                </div>
+              </div>
+
+              <div v-if="evalCaseForm.route_type === 'Skills'" class="route-config">
+                <h4>Skills 期望配置</h4>
+                <div class="grid-form">
+                  <label class="field">
+                    <span>期望 Skill</span>
+                    <input v-model="skillsExpectedSkillId" class="input" placeholder="chat_quality_feedback" />
+                  </label>
+                  <label class="field">
+                    <span>必填信息</span>
+                    <input v-model="skillsRequiredInfoInput" class="input" placeholder="角色名,问题类型,截图/对话片段" />
+                  </label>
+                </div>
+                <label class="field">
+                  <span>期望工单字段</span>
+                  <textarea v-model="skillsTicketFieldsText" class="textarea compact-textarea" placeholder="一行一个字段，例如：&#10;issue_type=回复重复&#10;priority=medium" />
+                </label>
+              </div>
+
               <button class="btn primary" :disabled="!evalCaseForm.question.trim()" @click="createEvaluationCase">新增评测用例</button>
             </div>
           </section>
@@ -394,9 +541,9 @@
               <thead>
                 <tr>
                   <th>问题</th>
+                  <th>链路</th>
                   <th>期望意图</th>
-                  <th>期望文档</th>
-                  <th>期望 Chunk</th>
+                  <th>期望配置</th>
                   <th>标签</th>
                   <th>状态</th>
                 </tr>
@@ -404,9 +551,9 @@
               <tbody>
                 <tr v-for="item in evaluationCases" :key="item.case_id">
                   <td class="strong">{{ item.question }}</td>
+                  <td>{{ item.route_type || '-' }}</td>
                   <td>{{ item.expected_intent || '-' }}</td>
-                  <td>{{ item.expected_doc_id || '-' }}</td>
-                  <td>{{ item.expected_chunk_ids?.length || 0 }}</td>
+                  <td>{{ payloadSummary(item) }}</td>
                   <td>{{ item.tags?.join('、') || '-' }}</td>
                   <td><StatusPill :status="item.status" /></td>
                 </tr>
@@ -604,6 +751,7 @@ import { api, uploadApi } from '../utils/api'
 
 const navItems = [
   { key: 'kb', label: '知识库构建', title: '知识库构建平台', subtitle: '飞书采集、元数据、分块预览、发布草稿', icon: '▦' },
+  { key: 'tools', label: '工具注册表', title: '工具注册表', subtitle: 'MCP 工具的唯一维护入口，评测集只引用 tool_id', icon: '⌘' },
   { key: 'eval', label: '评测中心', title: '评测中心', subtitle: '评测集、自动化运行、指标报告、BadCase 归因', icon: '◫' },
   { key: 'tickets', label: '工单处理', title: '客服工单后台', subtitle: 'AI 转人工、处理结论、BadCase 回流入口', icon: '□' },
   { key: 'compensation', label: '补偿操作', title: '用户补偿中心', subtitle: '权益补发、星能/回声贝补偿、操作留痕', icon: '◇' },
@@ -675,7 +823,7 @@ const recallSearched = ref(false)
 const evaluationCases = ref([])
 const evaluationRuns = ref([])
 const latestRun = ref(null)
-const expectedChunkInput = ref('')
+const tools = ref([])
 const evalCaseForm = ref({
   question: '',
   expected_answer: '',
@@ -683,7 +831,35 @@ const evalCaseForm = ref({
   expected_doc_id: '',
   expected_chunk_ids: [],
   evaluation_type: 'rag_recall',
+  route_type: 'RAG',
+  expected_payload: {},
   tags: [],
+  status: 'active',
+})
+const ragExpectedDocumentsInput = ref('')
+const ragAnswerPointsInput = ref('')
+const ragExpectedKeywordsInput = ref('')
+const ragExpectedSnippetsInput = ref('')
+const mcpExpectedToolId = ref('')
+const mcpRequiredSlotsInput = ref('')
+const mcpExpectedArgsText = ref('{}')
+const mcpMockResponseText = ref('{}')
+const skillsExpectedSkillId = ref('chat_quality_feedback')
+const skillsRequiredInfoInput = ref('角色名,问题类型,截图/对话片段')
+const skillsTicketFieldsText = ref('issue_type=\npriority=\nsummary=')
+const toolIntentInput = ref('')
+const toolInputSchemaText = ref('{}')
+const toolMockResponseText = ref('{}')
+const toolForm = ref({
+  tool_id: '',
+  name: '',
+  description: '',
+  applicable_intents: [],
+  input_schema: {},
+  output_schema: {},
+  mock_response: {},
+  failure_strategy: '失败后澄清用户或转人工',
+  owner: '产品/研发',
   status: 'active',
 })
 const evalRunForm = ref({
@@ -915,15 +1091,92 @@ async function loadCompensations() {
   compensations.value = data.records || []
 }
 
+async function loadTools() {
+  const data = await api('/tools')
+  tools.value = data.tools || []
+}
+
+function parseJson(text, fallback = {}) {
+  try {
+    return text?.trim() ? JSON.parse(text) : fallback
+  } catch {
+    throw new Error('JSON 格式不正确')
+  }
+}
+
+async function saveTool() {
+  try {
+    const payload = {
+      ...toolForm.value,
+      applicable_intents: toolIntentInput.value.split(',').map((item) => item.trim()).filter(Boolean),
+      input_schema: parseJson(toolInputSchemaText.value, {}),
+      mock_response: parseJson(toolMockResponseText.value, {}),
+    }
+    await api('/tools', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+    await loadTools()
+  } catch (error) {
+    window.alert(error.message)
+  }
+}
+
+function fillToolForm(tool) {
+  toolForm.value = {
+    tool_id: tool.tool_id,
+    name: tool.name,
+    description: tool.description || '',
+    applicable_intents: tool.applicable_intents || [],
+    input_schema: tool.input_schema || {},
+    output_schema: tool.output_schema || {},
+    mock_response: tool.mock_response || {},
+    failure_strategy: tool.failure_strategy || '',
+    owner: tool.owner || '产品/研发',
+    status: tool.status || 'active',
+  }
+  toolIntentInput.value = toolForm.value.applicable_intents.join(',')
+  toolInputSchemaText.value = JSON.stringify(toolForm.value.input_schema, null, 2)
+  toolMockResponseText.value = JSON.stringify(toolForm.value.mock_response, null, 2)
+}
+
 async function loadEvaluationCases() {
   const data = await api('/evaluations/cases')
   evaluationCases.value = data.cases || []
 }
 
 async function createEvaluationCase() {
+  let expectedPayload = {}
+  if (evalCaseForm.value.route_type === 'RAG') {
+    expectedPayload = {
+      expected_documents: ragExpectedDocumentsInput.value.split(',').map((item) => item.trim()).filter(Boolean),
+      expected_answer_points: ragAnswerPointsInput.value.split('\n').map((item) => item.trim()).filter(Boolean),
+      expected_keywords: ragExpectedKeywordsInput.value.split(',').map((item) => item.trim()).filter(Boolean),
+      expected_chunk_snippets: ragExpectedSnippetsInput.value.split(',').map((item) => item.trim()).filter(Boolean),
+    }
+  } else if (evalCaseForm.value.route_type === 'MCP') {
+    try {
+      expectedPayload = {
+        expected_tool_id: mcpExpectedToolId.value,
+        required_slots: mcpRequiredSlotsInput.value.split(',').map((item) => item.trim()).filter(Boolean),
+        expected_args: parseJson(mcpExpectedArgsText.value, {}),
+        mock_response: parseJson(mcpMockResponseText.value, {}),
+      }
+    } catch (error) {
+      window.alert(error.message)
+      return
+    }
+  } else if (evalCaseForm.value.route_type === 'Skills') {
+    expectedPayload = {
+      expected_skill_id: skillsExpectedSkillId.value,
+      required_info: skillsRequiredInfoInput.value.split(',').map((item) => item.trim()).filter(Boolean),
+      expected_ticket_fields: skillsTicketFieldsText.value.split('\n').map((item) => item.trim()).filter(Boolean),
+    }
+  }
   const payload = {
     ...evalCaseForm.value,
-    expected_chunk_ids: expectedChunkInput.value.split(',').map((item) => item.trim()).filter(Boolean),
+    expected_payload: expectedPayload,
+    expected_answer: (expectedPayload.expected_answer_points || []).join('\n'),
   }
   await api('/evaluations/cases', {
     method: 'POST',
@@ -936,10 +1189,15 @@ async function createEvaluationCase() {
     expected_doc_id: '',
     expected_chunk_ids: [],
     evaluation_type: 'rag_recall',
+    route_type: 'RAG',
+    expected_payload: {},
     tags: [],
     status: 'active',
   }
-  expectedChunkInput.value = ''
+  ragExpectedDocumentsInput.value = ''
+  ragAnswerPointsInput.value = ''
+  ragExpectedKeywordsInput.value = ''
+  ragExpectedSnippetsInput.value = ''
   await loadEvaluationCases()
 }
 
@@ -1001,6 +1259,22 @@ function percent(value) {
   return `${Math.round((Number(value) || 0) * 100)}%`
 }
 
+function payloadSummary(item) {
+  const payload = item.expected_payload || {}
+  if (item.route_type === 'RAG') {
+    const docs = payload.expected_documents?.length ? `${payload.expected_documents.length} 文档` : '未配文档'
+    const points = payload.expected_answer_points?.length ? `${payload.expected_answer_points.length} 要点` : '未配要点'
+    return `${docs} / ${points}`
+  }
+  if (item.route_type === 'MCP') {
+    return payload.expected_tool_id || '未配工具'
+  }
+  if (item.route_type === 'Skills') {
+    return payload.expected_skill_id || '未配 Skill'
+  }
+  return '-'
+}
+
 function sourceLabel(value) {
   return {
     feishu: '飞书',
@@ -1059,6 +1333,7 @@ const StatusPill = defineComponent({
 
 onMounted(() => {
   loadDocuments().catch(() => {})
+  loadTools().catch(() => {})
   loadTickets().catch(() => {})
   loadCompensations().catch(() => {})
   loadEvaluationCases().catch(() => {})

@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from openai import APIStatusError
 
 from app.agent.state import AgentState
+from app.agent.prompts.rewrite import get_rewrite_prompt
 from app.agent.json_output import ainvoke_json
 from app.llm import get_llm
 from app.message_utils import build_multimodal_prompt, get_message_image_urls, get_message_text
@@ -221,7 +222,7 @@ async def rewrite_node(state: AgentState) -> dict:
     short_memory = _format_short_memory(state)
     image_context = _format_image_context(state)
 
-    prompt = REWRITE_PROMPT.format(
+    prompt = get_rewrite_prompt(REWRITE_PROMPT).format(
         current_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         user_input=current_query,
         image_context=image_context,

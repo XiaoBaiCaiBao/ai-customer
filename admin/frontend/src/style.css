@@ -525,7 +525,8 @@ td.strong {
   gap: 20px;
 }
 
-.eval-grid {
+.eval-grid,
+.tool-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 420px;
   gap: 20px;
@@ -566,6 +567,55 @@ td.strong {
   display: grid;
   gap: 14px;
   padding: 18px;
+}
+
+.route-config {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 14px;
+  background: #f8fafc;
+}
+
+.route-config h4 {
+  margin: 0 0 12px;
+  color: #0f172a;
+  font-size: 14px;
+}
+
+.json-textarea {
+  min-height: 150px;
+}
+
+.tool-list {
+  display: grid;
+  gap: 12px;
+  max-height: calc(100vh - 190px);
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.tool-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 14px;
+  background: #ffffff;
+}
+
+.tool-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.tool-card-head strong {
+  color: #0f172a;
+}
+
+.tool-card-head p {
+  margin: 5px 0 0;
+  color: #64748b;
+  font-size: 12px;
 }
 
 .eval-result {
@@ -672,7 +722,8 @@ td.strong {
   .grid-two,
   .ticket-layout,
   .comp-layout,
-  .eval-grid {
+  .eval-grid,
+  .tool-grid {
     grid-template-columns: 1fr;
   }
 

@@ -10,7 +10,8 @@ const WORK_ORDER_ISSUE_TYPES = new Set([
   "回声贝未到账",
   "虚拟资产未到账",
   "体力异常",
-  "订单异常"
+  "订单异常",
+  "聊天质量反馈"
 ]);
 
 export class BusinessError extends Error {
